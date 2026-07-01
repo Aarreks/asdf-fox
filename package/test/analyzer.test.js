@@ -122,6 +122,12 @@ test('checks a breached base formed by deleting exactly one final character', ()
     candidate.value === 'correcthorsebattery' && candidate.label === 'removed one final character'));
 });
 
+test('checks a short breached base formed by deleting one final character', () => {
+  const candidates = buildVariantCandidates('algodoo7');
+  assert.ok(candidates.some((candidate) =>
+    candidate.value === 'algodoo' && candidate.label === 'removed one final character'));
+});
+
 test('does not strip arbitrary six-digit tails', () => {
   const candidates = buildVariantCandidates('correcthorsebattery549271');
   assert.ok(!candidates.some((candidate) => candidate.value === 'correcthorsebattery'));

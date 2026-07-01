@@ -26,8 +26,8 @@ function normaliseLeet(password) {
 function buildVariantCandidates(password) {
   const candidates = [];
   const seen = new Set();
-  const add = (value, kind, label) => {
-    if (value.length < 8 || value === password || seen.has(value)) return;
+  const add = (value, kind, label, minimumLength = 8) => {
+    if (value.length < minimumLength || value === password || seen.has(value)) return;
     seen.add(value);
     candidates.push({ value, kind, label });
   };
@@ -43,8 +43,11 @@ function buildVariantCandidates(password) {
   // intentionally only ONE deletion: it does not turn a breached base plus six
   // genuinely random digits into a near-breach result, because deleting one
   // character still leaves five unknown digits.
-  if (password.length >= 9) {
-    add(password.slice(0, -1), 'cheap-suffix', 'removed one final character');
+  // A breached short base can still matter when the entered password is
+  // just that base plus one final character. Keep this narrowly bounded:
+  // one deletion only, and never test a base shorter than five characters.
+  if (password.length >= 6) {
+    add(password.slice(0, -1), 'cheap-suffix', 'removed one final character', 5);
   }
 
   // Low-cost numeric suffixes only. Crucially, this does NOT strip a generic
