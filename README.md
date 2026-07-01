@@ -28,7 +28,7 @@ D  >=  4.5  Fail
 F  <   4.5  Extreme fail
 ```
 
-An exact Pwned Passwords match is shown as `F — Exposed password` regardless of the estimate.
+An exact Pwned Passwords match is shown as `F - Exposed password` regardless of the estimate.
 The grade is a presentation default, not permission to accept a password without considering
 breach status or account-specific context.
 
