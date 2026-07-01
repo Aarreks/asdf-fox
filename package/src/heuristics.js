@@ -112,31 +112,101 @@ function findNumberedRepeatedToken(password) {
     const normalized = token.toLocaleLowerCase('en-US');
     const values = [first.value];
     let cursor = first.end;
+    let step = null;
+
+    // Preserve the longest arithmetic prefix. A matching token that resumes
+    // with an unrelated final number is literal suffix material, not evidence
+    // that the already-established local run was independent randomness:
+    //   1and2and3and4and1 -> [and2, and3, and4] + literal "and1".
+    // This still requires three terms before any structural candidate exists,
+    // so gay1gay2gay4 remains rejected.
+    while (cursor < n && password.slice(cursor, cursor + token.length).toLocaleLowerCase('en-US') === normalized) {
+      const next = readDigits(password, cursor + token.length);
+      if (!next || next.text.length > 6 || !Number.isSafeInteger(next.value)) break;
+
+      const nextStep = next.value - values[values.length - 1];
+      if (step === null) {
+        step = nextStep;
+        if (step === 0 || Math.abs(step) > 12) break;
+      } else if (nextStep !== step) {
+        break;
+      }
+
+      values.push(next.value);
+      cursor = next.end;
+
+      if (values.length < 3) continue;
+      const candidate = {
+        token,
+        start: values[0],
+        step,
+        terms: values.length,
+        width: first.text.length,
+        spanStart,
+        spanEnd: cursor
+      };
+
+      // Prefer the widest explicit template. For equal spans, prefer more
+      // repeated terms so a later suffix cannot displace a fuller explanation.
+      const candidateLength = candidate.spanEnd - candidate.spanStart;
+      const bestLength = best ? best.spanEnd - best.spanStart : -1;
+      if (!best || candidateLength > bestLength ||
+        (candidateLength === bestLength && candidate.terms > best.terms)) {
+        best = candidate;
+      }
+    }
+  }
+
+  return best;
+}
+
+function findRepeatedTokenNumericTemplate(password) {
+  // Detect a local template of the form:
+  //   token + n1, token + n2, token + n3, ...
+  // without requiring n1, n2, n3 to form an arithmetic progression.
+  //
+  // This is intentionally narrower than a generic repeated-word matcher:
+  // the exact same 3+ character token must alternate directly with explicit
+  // numeric fields at least three times. The numeric fields remain separately
+  // charged by the scoring model, so this is weaker than an arithmetic counter.
+  const n = password.length;
+  if (n < 12) return null;
+
+  let best = null;
+  for (let spanStart = 0; spanStart < n; spanStart += 1) {
+    if (!/[A-Za-z]/u.test(password[spanStart])) continue;
+
+    let tokenEnd = spanStart;
+    while (tokenEnd < n && /[A-Za-z]/u.test(password[tokenEnd])) tokenEnd += 1;
+    const token = password.slice(spanStart, tokenEnd);
+    if (token.length < 3 || token.length > 32) continue;
+
+    const first = readDigits(password, tokenEnd);
+    if (!first || first.text.length > 6 || !Number.isSafeInteger(first.value)) continue;
+
+    const normalized = token.toLocaleLowerCase('en-US');
+    const numbers = [first.text];
+    let cursor = first.end;
 
     while (cursor < n && password.slice(cursor, cursor + token.length).toLocaleLowerCase('en-US') === normalized) {
       const next = readDigits(password, cursor + token.length);
       if (!next || next.text.length > 6 || !Number.isSafeInteger(next.value)) break;
-      values.push(next.value);
+      numbers.push(next.text);
       cursor = next.end;
     }
 
-    if (values.length < 3) continue;
-    const step = values[1] - values[0];
-    if (step === 0 || Math.abs(step) > 12) continue;
-    if (!values.every((value, index) => index === 0 || value === values[0] + (index * step))) continue;
+    if (numbers.length < 3) continue;
 
     const candidate = {
       token,
-      start: values[0],
-      step,
-      terms: values.length,
-      width: first.text.length,
+      terms: numbers.length,
+      numberFields: numbers,
       spanStart,
       spanEnd: cursor
     };
 
     // Prefer the widest explicit template. For equal spans, prefer more
-    // repeated terms so a later suffix cannot displace a fuller explanation.
+    // repeated terms so a shorter embedded prefix does not hide the evidence.
     const candidateLength = candidate.spanEnd - candidate.spanStart;
     const bestLength = best ? best.spanEnd - best.spanStart : -1;
     if (!best || candidateLength > bestLength ||
@@ -367,6 +437,22 @@ function detectStructure(password) {
     });
   }
 
+  const numberedTemplate = findRepeatedTokenNumericTemplate(password);
+  if (numberedTemplate) {
+    detections.push({
+      id: 'repeated-token-numeric-template',
+      severity: 'medium',
+      title: 'Repeated token with variable numbers',
+      detail: `The token “${numberedTemplate.token}” repeats ${numberedTemplate.terms} times in an explicit token-number template. Its numeric fields are still charged individually because they do not form one arithmetic counter.`,
+      root: numberedTemplate.token,
+      terms: numberedTemplate.terms,
+      numberFields: numberedTemplate.numberFields,
+      spanStart: numberedTemplate.spanStart,
+      spanEnd: numberedTemplate.spanEnd,
+      capLog10: null
+    });
+  }
+
   const periodic = findPeriodicPrefix(password);
   if (periodic) {
     detections.push({
@@ -466,6 +552,24 @@ function buildLocalOption(detection, scoreSegment) {
     });
     detection.rootBaselineLog10 = rootLog10;
     detection.sequenceModelLog10 = cost - rootLog10;
+    detection.structuralCandidateLog10 = cost;
+  }
+
+  if (detection.id === 'repeated-token-numeric-template') {
+    const rootLog10 = segmentLog10(scoreSegment, detection.root);
+    const numberFieldLog10 = detection.numberFields
+      .map((field) => segmentLog10(scoreSegment, field));
+    const numericFieldsLog10 = numberFieldLog10.reduce((total, cost) => total + cost, 0);
+
+    // Preserve each separately chosen numeric field, then charge a bounded
+    // token-number-template choice. This deliberately stays costlier than
+    // the arithmetic-counter model, which can encode start + step + length.
+    const templateLog10 = log10(Math.max(32, detection.terms * 16)) + 0.25;
+    cost = rootLog10 + numericFieldsLog10 + templateLog10;
+    detection.rootBaselineLog10 = rootLog10;
+    detection.numberFieldBaselineLog10 = numberFieldLog10;
+    detection.numericFieldsBaselineLog10 = numericFieldsLog10;
+    detection.templateModelLog10 = templateLog10;
     detection.structuralCandidateLog10 = cost;
   }
 
@@ -631,5 +735,6 @@ module.exports = {
   applyStructuralCaps,
   arithmeticRunModelLog10,
   isDigitArithmeticSequence,
-  findNumberedRepeatedToken
+  findNumberedRepeatedToken,
+  findRepeatedTokenNumericTemplate
 };

@@ -96,6 +96,73 @@ test('does not infer a numbered repeated-token template from non-arithmetic or m
   }
 });
 
+test('detects a repeated token with irregular numeric fields', () => {
+  const password = '1and2and3and5and1';
+  const detections = detectStructure(password);
+  const template = detections.find((detection) => detection.id === 'repeated-token-numeric-template');
+
+  assert.ok(template);
+  assert.equal(template.root, 'and');
+  assert.equal(template.terms, 4);
+  assert.deepEqual(template.numberFields, ['2', '3', '5', '1']);
+  assert.deepEqual([template.spanStart, template.spanEnd], [1, password.length]);
+  assert.ok(!detections.some((detection) => detection.id === 'numbered-repeated-token-sequence'));
+
+  const score = (segment) => ({
+    guessesLog10: ({ and: 1.1, '1': 1, '2': 1, '3': 1, '5': 1 }[segment] ?? 20)
+  });
+  const capped = applyStructuralCaps(15, detections, score);
+  assert.ok(capped.effectiveLog10 < 15, `${capped.effectiveLog10} did not remove repeated-token entropy`);
+  assert.ok(capped.effectiveLog10 > 6, `${capped.effectiveLog10} treated irregular numbers like one arithmetic counter`);
+  assert.ok(capped.composition?.detectorIds.includes('repeated-token-numeric-template'));
+});
+
+test('prefers the arithmetic-counter model when the same repeated-token template is arithmetic', () => {
+  const password = 'and2and3and4and5';
+  const detections = detectStructure(password);
+  const arithmetic = detections.find((detection) => detection.id === 'numbered-repeated-token-sequence');
+  const template = detections.find((detection) => detection.id === 'repeated-token-numeric-template');
+
+  assert.ok(arithmetic);
+  assert.ok(template);
+
+  const score = (segment) => ({
+    guessesLog10: ({ and: 1.1, '2': 1, '3': 1, '4': 1, '5': 1 }[segment] ?? 20)
+  });
+  const capped = applyStructuralCaps(15, detections, score);
+  assert.ok(capped.effectiveLog10 < 6, `${capped.effectiveLog10} did not select the compact arithmetic model`);
+  assert.ok(arithmetic.selectedInComposite);
+  assert.equal(template.selectedInComposite, false);
+});
+
+test('does not infer a generic repeated-token numeric template from too few or mismatched blocks', () => {
+  for (const password of ['and2and3', 'and2ant3and5', 'an2an3an5']) {
+    const detections = detectStructure(password);
+    assert.ok(!detections.some((detection) => detection.id === 'repeated-token-numeric-template'), password);
+  }
+});
+
+test('keeps an established numbered run when a matching token resumes with an unrelated final number', () => {
+  const password = '1and2and3and4and1';
+  const detections = detectStructure(password);
+  const numbered = detections.find((detection) => detection.id === 'numbered-repeated-token-sequence');
+
+  assert.ok(numbered);
+  assert.equal(numbered.root, 'and');
+  assert.equal(numbered.start, 2);
+  assert.equal(numbered.step, 1);
+  assert.equal(numbered.terms, 3);
+  assert.deepEqual([numbered.spanStart, numbered.spanEnd], [1, 13]);
+
+  const score = (segment) => ({
+    guessesLog10: ({ and: 1.1, '1': 0.3, and1: 1.4 }[segment] ?? 20)
+  });
+  const capped = applyStructuralCaps(14.15, detections, score);
+  assert.ok(capped.effectiveLog10 < 14.15, `${capped.effectiveLog10} did not retain the local arithmetic run`);
+  assert.ok(capped.composition?.pieces.some((piece) => piece.type === 'literal' && piece.start === 0 && piece.end === 1));
+  assert.ok(capped.composition?.pieces.some((piece) => piece.type === 'literal' && piece.start === 13 && piece.end === password.length));
+});
+
 test('detects numbered repeated-token templates across case changes', () => {
   const detections = detectStructure('Gay1gAY2GAY3');
   const numbered = detections.find((detection) => detection.id === 'numbered-repeated-token-sequence');
