@@ -62,3 +62,29 @@ test('does not remove two terminal separators during local recovery', () => {
   assert.equal(recovered.changed, false);
   assert.equal(recovered.composition, null);
 });
+
+test('retains full-password arrangement cost when an edge separator exposes a complete parse', () => {
+  const password = 'youwantapples?';
+  const baseline = zxcvbn(password, []);
+  const normalized = zxcvbn('youwantapples', []);
+  const recovered = scoreRecoveredLocalDictionaryParse(password, baseline, (value) => zxcvbn(value, []));
+
+  assert.equal(recovered.changed, true);
+  assert.ok(recovered.composition);
+  assert.ok(
+    recovered.composition.candidateLog10 >= normalized.guessesLog10 + 0.15 - 1e-9,
+    'the recovery retains the normalized whole-password parse plus the stripped separator cost'
+  );
+  assert.ok(recovered.effectiveLog10 < baseline.guessesLog10);
+});
+
+test('does not score the punctuated form below the normalized form after the full pipeline', () => {
+  const plain = analyzePassword('youwantapples', { userInputs: [] });
+  const punctuated = analyzePassword('youwantapples?', { userInputs: [] });
+
+  assert.equal(punctuated.score.changedByLocalDictionaryRecovery, true);
+  assert.ok(
+    punctuated.score.effectiveLog10 > plain.score.effectiveLog10,
+    'adding ? retains a positive explicit cost after the same pair adjustment'
+  );
+});

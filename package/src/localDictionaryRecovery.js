@@ -58,6 +58,22 @@ function localParseCandidates(text) {
   return candidates;
 }
 
+function normalizedWholePasswordFloor(password, span, parse, baseScore) {
+  if (parse.separatorLog10 <= 0) return null;
+
+  const normalizedPassword = password.slice(0, span.i)
+    + parse.localText
+    + password.slice(span.j + 1);
+  const normalized = baseScore(normalizedPassword);
+
+  // A local splice does not reproduce zxcvbn's global arrangement cost.
+  // If removing one edge separator reveals a completely parsed password,
+  // keep that whole-password cost and explicitly charge the separator.
+  if (normalized.sequence.some((piece) => piece.pattern === 'bruteforce')) return null;
+
+  return normalized.guessesLog10 + parse.separatorLog10;
+}
+
 function scoreRecoveredLocalDictionaryParse(password, baseline, baseScore) {
   const candidates = [];
   const bruteForceSpans = baseline.sequence
@@ -80,10 +96,14 @@ function scoreRecoveredLocalDictionaryParse(password, baseline, baseScore) {
       if (!meaningfulPieces) continue;
       if (savings < MIN_LOG10_SAVINGS) continue;
 
-      const candidateLog10 = baseline.guessesLog10
+      const splicedCandidateLog10 = baseline.guessesLog10
         - span.guessesLog10
         + adjustedLocalLog10
         + LOCAL_PARSE_LAYOUT_LOG10;
+      const normalizedFloorLog10 = normalizedWholePasswordFloor(password, span, parse, baseScore);
+      const candidateLog10 = normalizedFloorLog10 === null
+        ? splicedCandidateLog10
+        : Math.max(splicedCandidateLog10, normalizedFloorLog10);
 
       if (!(candidateLog10 + 1e-9 < baseline.guessesLog10)) continue;
 
