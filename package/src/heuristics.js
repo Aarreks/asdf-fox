@@ -409,14 +409,39 @@ function isSimpleStream(stream) {
 
 function findInterleavedStructure(password) {
   if (password.length < 10) return null;
-  for (const offset of [0, 1]) {
-    const a = [...password].filter((_, index) => index % 2 === offset).join('');
-    const b = [...password].filter((_, index) => index % 2 !== offset).join('');
-    if (isSimpleStream(a) && isSimpleStream(b)) {
-      return { first: a, second: b, spanStart: 0, spanEnd: password.length };
+
+  // Keep the longest established local interleaving rather than requiring the
+  // entire password to remain perfect. A human may append unrelated material
+  // after an unmistakable alternating construction:
+  //   a7b7c7d7e7f7g + g
+  // The final g stays literal material; it must not erase the already-simple
+  // alpha and constant-digit streams.
+  let best = null;
+
+  for (let spanStart = 0; spanStart <= password.length - 10; spanStart += 1) {
+    for (let spanEnd = password.length; spanEnd >= spanStart + 10; spanEnd -= 1) {
+      const span = password.slice(spanStart, spanEnd);
+
+      for (const offset of [0, 1]) {
+        const first = [...span].filter((_, index) => index % 2 === offset).join('');
+        const second = [...span].filter((_, index) => index % 2 !== offset).join('');
+        if (!isSimpleStream(first) || !isSimpleStream(second)) continue;
+
+        const candidate = { first, second, spanStart, spanEnd };
+        const candidateLength = candidate.spanEnd - candidate.spanStart;
+        const bestLength = best ? best.spanEnd - best.spanStart : -1;
+
+        // Prefer the widest span. For ties, keep the earlier span so a suffix
+        // cannot displace an equally explanatory prefix.
+        if (!best || candidateLength > bestLength ||
+          (candidateLength === bestLength && candidate.spanStart < best.spanStart)) {
+          best = candidate;
+        }
+      }
     }
   }
-  return null;
+
+  return best;
 }
 
 function attachSource(detections, password) {
