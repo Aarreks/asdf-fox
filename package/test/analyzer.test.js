@@ -58,6 +58,27 @@ test('extending an already-established numeric run does not cause a downward sco
   assert.ok(fiveTerms - fourTerms < 0.25, `${fiveTerms} unexpectedly far above ${fourTerms}`);
 });
 
+test('keeps an established pure numeric sequence when unrelated digits follow', () => {
+  const password = '9899100101102102';
+  const detections = detectStructure(password);
+  const numeric = detections.find((detection) => detection.id === 'concatenated-numeric-sequence');
+
+  assert.ok(numeric);
+  assert.equal(numeric.run, '9899100101102');
+  assert.equal(numeric.start, 98);
+  assert.equal(numeric.step, 1);
+  assert.equal(numeric.terms, 5);
+  assert.deepEqual([numeric.spanStart, numeric.spanEnd], [0, 13]);
+  assert.equal(numeric.suffix, '102');
+
+  const score = (segment) => ({ guessesLog10: ({ '102': 3 }[segment] ?? 20) });
+  const capped = applyStructuralCaps(12, detections, score);
+  assert.ok(capped.effectiveLog10 < 12, `${capped.effectiveLog10} did not retain the established numeric prefix`);
+  assert.ok(capped.composition?.pieces.some((piece) =>
+    piece.type === 'literal' && piece.start === 13 && piece.end === password.length
+  ));
+});
+
 test('detects a repeated token with an arithmetic counter', () => {
   const password = 'gay1gay2gay3gay4';
   const detections = detectStructure(password);

@@ -29,53 +29,87 @@ function arithmeticRunModelLog10({ width, step, terms }) {
 function isDigitArithmeticSequence(text) {
   if (!/^\d{6,}$/u.test(text)) return null;
 
+  // Keep the longest established arithmetic prefix rather than requiring a
+  // whole contiguous digit run to be perfect. A human may append unrelated
+  // digits after an unmistakable sequence:
+  //   98 | 99 | 100 | 101 | 102 | 102
+  // The final 102 stays literal material; it must not erase the valid prefix.
+  //
   // Three terms establish a progression. Requiring five created a score cliff
   // when an already-obvious four-term run gained its next deterministic term.
+  let best = null;
   for (let width = 1; width <= Math.min(4, Math.floor(text.length / 2)); width += 1) {
     if (width > 1 && text[0] === '0') continue;
     const start = Number(text.slice(0, width));
     for (let step = -12; step <= 12; step += 1) {
       if (step === 0) continue;
       let value = start;
-      let built = '';
+      let cursor = 0;
       let terms = 0;
-      while (built.length < text.length && terms <= 120) {
+
+      while (cursor < text.length && terms <= 120) {
         if (value < 0) break;
-        built += String(value);
-        value += step;
+        const term = String(value);
+        if (!text.startsWith(term, cursor)) break;
+
+        cursor += term.length;
         terms += 1;
-      }
-      if (built === text && terms >= 3) {
-        return {
+        value += step;
+
+        if (terms < 3) continue;
+
+        const candidate = {
           start,
           step,
           terms,
           width,
+          consumedLength: cursor,
           runModelLog10: arithmeticRunModelLog10({ width, step, terms })
         };
+
+        // Prefer the widest established span. For a tie, prefer more terms,
+        // then the smaller absolute step, which is the simpler enumeration.
+        if (!best ||
+          candidate.consumedLength > best.consumedLength ||
+          (candidate.consumedLength === best.consumedLength && candidate.terms > best.terms) ||
+          (candidate.consumedLength === best.consumedLength && candidate.terms === best.terms &&
+            Math.abs(candidate.step) < Math.abs(best.step))) {
+          best = candidate;
+        }
       }
     }
   }
-  return null;
+  return best;
 }
 
 function findNumericSequence(password) {
+  let best = null;
+
   for (const match of password.matchAll(/\d{6,}/gu)) {
-    const run = match[0];
-    const sequence = isDigitArithmeticSequence(run);
+    const digitRun = match[0];
+    const sequence = isDigitArithmeticSequence(digitRun);
     if (!sequence) continue;
     const index = match.index;
-    return {
-      run,
+    const spanEnd = index + sequence.consumedLength;
+    const candidate = {
+      run: digitRun.slice(0, sequence.consumedLength),
       index,
       prefix: password.slice(0, index),
-      suffix: password.slice(index + run.length),
+      suffix: password.slice(spanEnd),
       spanStart: index,
-      spanEnd: index + run.length,
+      spanEnd,
       ...sequence
     };
+
+    const candidateLength = candidate.spanEnd - candidate.spanStart;
+    const bestLength = best ? best.spanEnd - best.spanStart : -1;
+    if (!best || candidateLength > bestLength ||
+      (candidateLength === bestLength && candidate.terms > best.terms)) {
+      best = candidate;
+    }
   }
-  return null;
+
+  return best;
 }
 
 function readDigits(password, start) {
