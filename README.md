@@ -32,8 +32,6 @@ An exact Pwned Passwords match is shown as `F - Exposed password` regardless of 
 The grade is a presentation default, not permission to accept a password without considering
 breach status or account-specific context.
 
-**Please avoid whole-number log10 policy thresholds!** zxcvbn’s legacy score transitions occur around whole powers of ten. A password with no detected pattern can land on opposite sides of one of those boundaries because of small estimator differences, rather than a meaningful security difference (e.g., a 10-random-character password might get 9.9999... or 10.0000...). asdf-fox’s default A-F grades use half-log thresholds (4.5, 6.5, 8.5, and 10.5) to stay away from those transitions. Compare the unrounded effectiveLog10 value against a deliberate non-integer threshold; do not round it first or enforce policy from zxcvbn’s 0-4 score.
-
 ## Local development
 
 Requires Node 20+.
