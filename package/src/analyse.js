@@ -2,6 +2,7 @@
 
 const { zxcvbn, parseContext } = require('./zxcvbn');
 const { metadata: modernLexiconMetadata, scoreLexiconAware } = require('./modernLexicon');
+const { scoreRecoveredLocalDictionaryParse } = require('./localDictionaryRecovery');
 const { detectStructure, applyStructuralCaps } = require('./heuristics');
 const { buildVariantCandidates } = require('./variants');
 const { checkPwned } = require('./pwned');
@@ -77,9 +78,15 @@ function createBaseResult(password, options = {}) {
   );
   const selectedLexicalSpans = new Set((lexical.composition?.matches || []).map((match) => `${match.start}:${match.end}:${match.token}`));
 
+  const recoveryStarted = now();
+  const localDictionaryRecovery = scoreRecoveredLocalDictionaryParse(password, baseline, baseScore);
+  timings.push({ label: 'local dictionary recovery', ms: round(now() - recoveryStarted) });
+
+  const preStructuralLog10 = Math.min(lexical.effectiveLog10, localDictionaryRecovery.effectiveLog10);
+
   const structuralStarted = now();
   const detections = detectStructure(password);
-  const structural = applyStructuralCaps(lexical.effectiveLog10, detections, (root) => {
+  const structural = applyStructuralCaps(preStructuralLog10, detections, (root) => {
     const rootResult = scoreLexiconAware(root, baseScore);
     return { guessesLog10: rootResult.effectiveLog10 };
   });
@@ -102,6 +109,7 @@ function createBaseResult(password, options = {}) {
       // Deprecated legacy alias. It returns the same grade object in 0.1.x.
       band: scoreGrade,
       changedByLexicon: lexical.changed,
+      changedByLocalDictionaryRecovery: localDictionaryRecovery.changed,
       changedByStructure: structural.adjustments.length > 0
     },
     contextTokensUsed: userInputs.length,
@@ -114,6 +122,16 @@ function createBaseResult(password, options = {}) {
         selectedByLexicon: selectedLexicalSpans.has(`${match.start}:${match.end}:${match.token}`)
       }))
     },
+    localDictionaryRecovery: localDictionaryRecovery.composition ? {
+      candidateLog10: round(localDictionaryRecovery.composition.candidateLog10),
+      spanStart: localDictionaryRecovery.composition.spanStart,
+      spanEnd: localDictionaryRecovery.composition.spanEnd,
+      text: localDictionaryRecovery.composition.text,
+      baselineSpanLog10: round(localDictionaryRecovery.composition.baselineSpanLog10),
+      localSpanLog10: round(localDictionaryRecovery.composition.localSpanLog10),
+      dictionaryCoverage: round(localDictionaryRecovery.composition.dictionaryCoverage),
+      dictionaryPieces: localDictionaryRecovery.composition.dictionaryPieces
+    } : null,
     exactPwned: null,
     closeVariantWarnings: [],
     pwnedChecks: [],
@@ -147,6 +165,7 @@ function createBaseResult(password, options = {}) {
       exactPwnedMeaning: 'Exact means the entire password hash matched the Pwned Passwords corpus.',
       variantMeaning: 'A close-variant hit is a bounded attacker-cost warning, not proof that the entered password itself was exposed.',
       modernLexicon: 'The local vocabulary overlay is not a breach result. It proposes an alternative parse using ranked contemporary tokens plus ordinary zxcvbn scoring for every literal gap. Frequency-ranked entries come from a wordfreq English snapshot through about 2021; newer seed entries receive deliberately conservative fallback ranks.',
+      localDictionaryRecovery: 'A bounded local recovery pass rechecks up to three generic spans selected by zxcvbn. It applies only when a local zxcvbn parse finds dictionary coverage over most of that span and materially lowers its estimate. It does not score phrases or infer semantic associations.',
       privacy: 'Only the first five characters of each candidate SHA-1 hash are sent to HIBP. The app never sends the plaintext password to HIBP and does not log or persist it.'
     }
   };

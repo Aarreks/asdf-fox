@@ -76,7 +76,12 @@ function render(data) {
   const vocabularySummary = data.score.changedByLexicon
     ? `lowered estimate to log10 ${data.score.lexiconLog10}`
     : 'no change';
+  const recovery = data.localDictionaryRecovery;
+  const recoverySummary = recovery ? 'lowered estimate' : 'no change';
   const structureSummary = data.score.changedByStructure ? 'lowered estimate' : 'no change';
+  const recoveryPanel = recovery
+    ? `<section class="panel"><h2>Recovered local word parse</h2><p>A section the full parse treated as generic text has a lower-cost known-word parse when checked on its own.</p><div class="lexicon-matches">${recovery.dictionaryPieces.map((piece) => `<article class="lexicon-match"><h3>${escapeHtml(piece.matchedWord || piece.token)}</h3><span>inside “${escapeHtml(recovery.text)}”</span></article>`).join('')}</div></section>`
+    : '';
 
   results.innerHTML = `
     <section class="summary panel ${escapeHtml(data.score.grade.level)}">
@@ -84,6 +89,7 @@ function render(data) {
       <dl>
         <div><dt>Baseline</dt><dd>log<sub>10</sub> ${data.score.baselineLog10}</dd></div>
         <div><dt>Words and names</dt><dd>${vocabularySummary}</dd></div>
+        <div><dt>Local word parse</dt><dd>${recoverySummary}</dd></div>
         <div><dt>Patterns</dt><dd>${structureSummary}</dd></div>
         <div><dt>Time</dt><dd>${ms(data.totalRuntimeMs)}</dd></div>
       </dl>
@@ -93,6 +99,7 @@ function render(data) {
       <article class="panel"><h2>Easy variations</h2>${variants}</article>
     </section>
     <section class="panel"><h2>Recognized words and names</h2><p class="subtle">Checked locally from the included word and name lists, including current names and terms that plain zxcvbn may miss.</p>${lexiconMatches}</section>
+    ${recoveryPanel}
     <section class="panel"><h2>Patterns noticed</h2>${structures}</section>
     <section class="grid-two">
       <article class="panel"><h2>Pwned Passwords lookups</h2>${data.pwnedChecks.length ? `<div class="table-wrap"><table><thead><tr><th>Checked</th><th>Result</th><th>Time</th></tr></thead><tbody>${checks}</tbody></table></div>` : '<p>Pwned Passwords was not checked for this result.</p>'}</article>
