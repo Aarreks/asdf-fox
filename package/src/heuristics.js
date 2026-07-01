@@ -1,0 +1,527 @@
+'use strict';
+
+function log10(value) {
+  return Math.log(value) / Math.LN10;
+}
+
+function segmentLog10(scoreSegment, value) {
+  return value.length === 0 ? 0 : scoreSegment(value).guessesLog10;
+}
+
+function numericStartChoices(width) {
+  // No leading zero for multi-digit terms. This is an estimate of the number
+  // of possible first values, not a claim that all values are equally likely.
+  return width === 1 ? 10 : 9 * (10 ** (width - 1));
+}
+
+function arithmeticRunModelLog10({ width, step, terms }) {
+  // A transparent, deliberately conservative enumeration model for ONLY the
+  // raw numeric run. Surrounding material is charged separately by the
+  // structural parser, so a detected suffix cannot erase prefix cost.
+  const start = log10(numericStartChoices(width));
+  const stepChoices = Math.max(6, Math.min(28, 4 + 2 * Math.abs(step)));
+  const stepCost = log10(stepChoices);
+  const termCount = log10(Math.max(4, terms));
+  const construction = 0.7;
+  return start + stepCost + termCount + construction;
+}
+
+function isDigitArithmeticSequence(text) {
+  if (!/^\d{6,}$/u.test(text)) return null;
+
+  // Three terms establish a progression. Requiring five created a score cliff
+  // when an already-obvious four-term run gained its next deterministic term.
+  for (let width = 1; width <= Math.min(4, Math.floor(text.length / 2)); width += 1) {
+    if (width > 1 && text[0] === '0') continue;
+    const start = Number(text.slice(0, width));
+    for (let step = -12; step <= 12; step += 1) {
+      if (step === 0) continue;
+      let value = start;
+      let built = '';
+      let terms = 0;
+      while (built.length < text.length && terms <= 120) {
+        if (value < 0) break;
+        built += String(value);
+        value += step;
+        terms += 1;
+      }
+      if (built === text && terms >= 3) {
+        return {
+          start,
+          step,
+          terms,
+          width,
+          runModelLog10: arithmeticRunModelLog10({ width, step, terms })
+        };
+      }
+    }
+  }
+  return null;
+}
+
+function findNumericSequence(password) {
+  for (const match of password.matchAll(/\d{6,}/gu)) {
+    const run = match[0];
+    const sequence = isDigitArithmeticSequence(run);
+    if (!sequence) continue;
+    const index = match.index;
+    return {
+      run,
+      index,
+      prefix: password.slice(0, index),
+      suffix: password.slice(index + run.length),
+      spanStart: index,
+      spanEnd: index + run.length,
+      ...sequence
+    };
+  }
+  return null;
+}
+
+function findPeriodicPrefix(password) {
+  const n = password.length;
+  if (n < 9) return null;
+
+  for (let period = 1; period <= Math.floor(n / 1.75); period += 1) {
+    if (period < 3) continue;
+    let matches = true;
+    for (let i = period; i < n; i += 1) {
+      if (password[i] !== password[i % period]) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches && n / period >= 1.75) {
+      return {
+        root: password.slice(0, period),
+        period,
+        repeats: n / period,
+        truncated: n % period !== 0,
+        spanStart: 0,
+        spanEnd: n
+      };
+    }
+  }
+  return null;
+}
+
+function findLocalTruncatedPeriodicSpan(password) {
+  const n = password.length;
+  if (n < 9) return null;
+
+  // Find an adjacent repeated root that may be cut short before unrelated
+  // trailing material. This is deliberately a local span:
+  //   prefix + root + rootPrefix + suffix
+  // That makes `flareonflareo13141516` parse as a truncated repeat followed
+  // by an independent numeric sequence, rather than requiring the whole
+  // password to be periodic.
+  //
+  // Requiring a 4+ character copied prefix and at least 60% of the root
+  // avoids treating a tiny accidental shared start as a repeat.
+  const maxRootLength = Math.min(24, Math.floor((n - 4) / 2));
+  for (let rootLength = maxRootLength; rootLength >= 4; rootLength -= 1) {
+    const minContinuation = Math.max(4, Math.ceil(rootLength * 0.6));
+    for (let firstStart = 0; firstStart + rootLength + minContinuation <= n; firstStart += 1) {
+      const root = password.slice(firstStart, firstStart + rootLength);
+      const remaining = n - (firstStart + rootLength);
+      const maxContinuation = Math.min(rootLength, remaining);
+
+      for (let continuationLength = maxContinuation; continuationLength >= minContinuation; continuationLength -= 1) {
+        const secondStart = firstStart + rootLength;
+        const secondEnd = secondStart + continuationLength;
+        if (password.slice(secondStart, secondEnd) !== root.slice(0, continuationLength)) continue;
+
+        // The whole-password periodic detector already gives the clearer
+        // explanation when this exact span consumes the entire password.
+        if (firstStart === 0 && secondEnd === n) continue;
+
+        return {
+          prefix: password.slice(0, firstStart),
+          root,
+          continuation: password.slice(secondStart, secondEnd),
+          suffix: password.slice(secondEnd),
+          rootLength,
+          continuationLength,
+          truncated: continuationLength < rootLength,
+          spanStart: firstStart,
+          spanEnd: secondEnd
+        };
+      }
+    }
+  }
+  return null;
+}
+
+function findRepeatedOuterChunk(password) {
+  const n = password.length;
+  if (n < 9) return null;
+
+  // password = root + bridge + root. The copies must be non-overlapping and
+  // occupy most of the value, avoiding a short accidental shared edge.
+  for (let rootLength = Math.floor((n - 1) / 2); rootLength >= 4; rootLength -= 1) {
+    const root = password.slice(0, rootLength);
+    const bridge = password.slice(rootLength, n - rootLength);
+    const suffix = password.slice(n - rootLength);
+    if (root !== suffix || bridge.length === 0) continue;
+    if ((2 * rootLength) / n < 0.6) continue;
+    return { root, bridge, rootLength, spanStart: 0, spanEnd: n };
+  }
+  return null;
+}
+
+function findEmbeddedRepeatedChunk(password) {
+  const n = password.length;
+  if (n < 13) return null;
+
+  // Detect a repeated nontrivial chunk with a short bridge anywhere in the
+  // password, not solely at the terminal boundary:
+  //   prefix + root + bridge + root + suffix
+  // The structural span is only root + bridge + root; prefix/suffix remain
+  // independently scoreable. That is what allows this rule to compose with,
+  // for example, a deterministic numeric suffix.
+  //
+  // firstStart begins at 1 because an exact root + bridge + root construction
+  // is handled by findRepeatedOuterChunk with a slightly lower layout cost.
+  const maxRootLength = Math.min(24, Math.floor((n - 2) / 2));
+  for (let rootLength = maxRootLength; rootLength >= 6; rootLength -= 1) {
+    for (let firstStart = 1; firstStart + (2 * rootLength) + 1 <= n; firstStart += 1) {
+      const root = password.slice(firstStart, firstStart + rootLength);
+      for (let bridgeLength = 1; bridgeLength <= 4; bridgeLength += 1) {
+        const secondStart = firstStart + rootLength + bridgeLength;
+        const secondEnd = secondStart + rootLength;
+        if (secondEnd > n) continue;
+        if (password.slice(secondStart, secondEnd) !== root) continue;
+        const localLength = 2 * rootLength + bridgeLength;
+        if ((2 * rootLength) / localLength < 0.7) continue;
+        return {
+          prefix: password.slice(0, firstStart),
+          root,
+          bridge: password.slice(firstStart + rootLength, secondStart),
+          suffix: password.slice(secondEnd),
+          rootLength,
+          spanStart: firstStart,
+          spanEnd: secondEnd
+        };
+      }
+    }
+  }
+  return null;
+}
+
+function monotoneAlpha(stream) {
+  if (stream.length < 4 || !/^[A-Za-z]+$/u.test(stream)) return false;
+  const codes = [...stream.toLowerCase()].map((ch) => ch.charCodeAt(0));
+  const delta = codes[1] - codes[0];
+  if (Math.abs(delta) !== 1) return false;
+  return codes.every((code, index) => index === 0 || code - codes[index - 1] === delta);
+}
+
+function monotoneDigits(stream) {
+  if (stream.length < 4 || !/^\d+$/u.test(stream)) return false;
+  const digits = [...stream].map(Number);
+  const delta = digits[1] - digits[0];
+  if (Math.abs(delta) !== 1) return false;
+  return digits.every((digit, index) => index === 0 || digit - digits[index - 1] === delta);
+}
+
+function isSimpleStream(stream) {
+  const constant = stream.length >= 4 && [...stream].every((ch) => ch === stream[0]);
+  return constant || monotoneAlpha(stream) || monotoneDigits(stream);
+}
+
+function findInterleavedStructure(password) {
+  if (password.length < 10) return null;
+  for (const offset of [0, 1]) {
+    const a = [...password].filter((_, index) => index % 2 === offset).join('');
+    const b = [...password].filter((_, index) => index % 2 !== offset).join('');
+    if (isSimpleStream(a) && isSimpleStream(b)) {
+      return { first: a, second: b, spanStart: 0, spanEnd: password.length };
+    }
+  }
+  return null;
+}
+
+function attachSource(detections, password) {
+  for (const detection of detections) {
+    Object.defineProperty(detection, '_password', {
+      value: password,
+      enumerable: false,
+      configurable: false
+    });
+  }
+  return detections;
+}
+
+function detectStructure(password) {
+  const detections = [];
+  const numeric = findNumericSequence(password);
+  if (numeric) {
+    detections.push({
+      id: 'concatenated-numeric-sequence',
+      severity: 'high',
+      title: 'Concatenated arithmetic sequence',
+      detail: `The numeric run is ${numeric.terms} values beginning at ${numeric.start} with step ${numeric.step}. It is a local span, so its estimate can compose with a separate detector elsewhere in the password.`,
+      run: numeric.run,
+      prefix: numeric.prefix,
+      suffix: numeric.suffix,
+      start: numeric.start,
+      step: numeric.step,
+      terms: numeric.terms,
+      width: numeric.width,
+      runModelLog10: numeric.runModelLog10,
+      spanStart: numeric.spanStart,
+      spanEnd: numeric.spanEnd,
+      capLog10: null
+    });
+  }
+
+  const periodic = findPeriodicPrefix(password);
+  if (periodic) {
+    detections.push({
+      id: 'periodic-or-truncated-repeat',
+      severity: 'medium',
+      title: periodic.truncated ? 'Truncated repeated root' : 'Repeated root',
+      detail: `The password is ${periodic.repeats.toFixed(2)} repeats of a ${periodic.period}-character root${periodic.truncated ? ', with the final repeat cut short' : ''}.`,
+      root: periodic.root,
+      spanStart: periodic.spanStart,
+      spanEnd: periodic.spanEnd,
+      capLog10: null
+    });
+  }
+
+  const localPeriodic = findLocalTruncatedPeriodicSpan(password);
+  if (localPeriodic) {
+    detections.push({
+      id: 'local-periodic-or-truncated-repeat',
+      severity: 'high',
+      title: localPeriodic.truncated ? 'Local truncated repeated root' : 'Local repeated root',
+      detail: `A ${localPeriodic.rootLength}-character root is immediately repeated${localPeriodic.truncated ? ` with its second copy cut to ${localPeriodic.continuationLength} characters` : ''}. Text after this local span is scored separately, so the reuse can compose with another detector.`,
+      root: localPeriodic.root,
+      continuation: localPeriodic.continuation,
+      truncated: localPeriodic.truncated,
+      spanStart: localPeriodic.spanStart,
+      spanEnd: localPeriodic.spanEnd,
+      capLog10: null
+    });
+  }
+
+  const repeatedOuter = findRepeatedOuterChunk(password);
+  if (repeatedOuter) {
+    detections.push({
+      id: 'repeated-prefix-suffix',
+      severity: 'high',
+      title: 'Repeated outer chunk',
+      detail: `The first and last ${repeatedOuter.rootLength} characters are the same exact chunk, with a ${repeatedOuter.bridge.length}-character insertion between them. Repeating that chunk does not add fresh entropy.`,
+      root: repeatedOuter.root,
+      bridge: repeatedOuter.bridge,
+      spanStart: repeatedOuter.spanStart,
+      spanEnd: repeatedOuter.spanEnd,
+      capLog10: null
+    });
+  }
+
+  const embedded = findEmbeddedRepeatedChunk(password);
+  if (embedded) {
+    detections.push({
+      id: 'embedded-repeated-chunk',
+      severity: 'medium',
+      title: 'Reused internal chunk',
+      detail: `A ${embedded.rootLength}-character chunk occurs twice with only a ${embedded.bridge.length}-character bridge. Text before and after this local span is scored separately, so this reuse can combine with another independent structural finding.`,
+      prefix: embedded.prefix,
+      root: embedded.root,
+      bridge: embedded.bridge,
+      suffix: embedded.suffix,
+      spanStart: embedded.spanStart,
+      spanEnd: embedded.spanEnd,
+      capLog10: null
+    });
+  }
+
+  const interleaved = findInterleavedStructure(password);
+  if (interleaved) {
+    detections.push({
+      id: 'interleaved-structured-streams',
+      severity: 'medium',
+      title: 'Interleaved simple streams',
+      detail: 'Every-other-character streams are each constant or monotone. This catches constructions like 1a1b1c1d… that do not look like one ordinary sequence.',
+      spanStart: interleaved.spanStart,
+      spanEnd: interleaved.spanEnd,
+      capLog10: 5.2
+    });
+  }
+
+  return attachSource(detections, password);
+}
+
+function buildLocalOption(detection, scoreSegment) {
+  let cost = detection.capLog10;
+
+  if (detection.id === 'concatenated-numeric-sequence') {
+    cost = detection.runModelLog10;
+    detection.sequenceModelLog10 = cost;
+    detection.structuralCandidateLog10 = cost;
+  }
+
+  if (detection.id === 'periodic-or-truncated-repeat') {
+    const rootLog10 = segmentLog10(scoreSegment, detection.root);
+    cost = rootLog10 + log10(Math.max(8, detection.root.length * 8));
+    detection.rootBaselineLog10 = rootLog10;
+    detection.structuralCandidateLog10 = cost;
+  }
+
+  if (detection.id === 'local-periodic-or-truncated-repeat') {
+    const rootLog10 = segmentLog10(scoreSegment, detection.root);
+    // Pay for choosing the root once and for the decision to repeat/truncate
+    // it. The duplicated material itself contributes no independent entropy.
+    cost = rootLog10 + log10(Math.max(8, detection.root.length * 8));
+    detection.rootBaselineLog10 = rootLog10;
+    detection.structuralCandidateLog10 = cost;
+  }
+
+  if (detection.id === 'repeated-prefix-suffix') {
+    const rootLog10 = segmentLog10(scoreSegment, detection.root);
+    const bridgeLog10 = segmentLog10(scoreSegment, detection.bridge);
+    cost = rootLog10 + bridgeLog10 + log10(16);
+    detection.rootBaselineLog10 = rootLog10;
+    detection.bridgeBaselineLog10 = bridgeLog10;
+    detection.structuralCandidateLog10 = cost;
+  }
+
+  if (detection.id === 'embedded-repeated-chunk') {
+    const rootLog10 = segmentLog10(scoreSegment, detection.root);
+    const bridgeLog10 = segmentLog10(scoreSegment, detection.bridge);
+    // This span is root + bridge + root. The first root and bridge are paid
+    // once; the second root is reused. Prefix/suffix stay outside this local
+    // model and are charged by the composition pass.
+    cost = rootLog10 + bridgeLog10 + log10(32);
+    detection.rootBaselineLog10 = rootLog10;
+    detection.bridgeBaselineLog10 = bridgeLog10;
+    detection.structuralCandidateLog10 = cost;
+  }
+
+  if (!Number.isFinite(cost)) return null;
+  if (!Number.isInteger(detection.spanStart) || !Number.isInteger(detection.spanEnd)) return null;
+  return {
+    id: detection.id,
+    title: detection.title,
+    start: detection.spanStart,
+    end: detection.spanEnd,
+    cost
+  };
+}
+
+function nonOverlapping(options) {
+  let end = -1;
+  for (const option of options) {
+    if (option.start < end) return false;
+    end = option.end;
+  }
+  return true;
+}
+
+function scoreCompositeParse(password, options, scoreSegment) {
+  let cursor = 0;
+  let total = 0;
+  const pieces = [];
+
+  for (const option of options) {
+    const literal = password.slice(cursor, option.start);
+    if (literal.length) {
+      const cost = segmentLog10(scoreSegment, literal);
+      total += cost;
+      pieces.push({ type: 'literal', start: cursor, end: option.start, cost });
+    }
+    total += option.cost;
+    pieces.push({ type: 'structure', id: option.id, start: option.start, end: option.end, cost: option.cost });
+    cursor = option.end;
+  }
+
+  const suffix = password.slice(cursor);
+  if (suffix.length) {
+    const cost = segmentLog10(scoreSegment, suffix);
+    total += cost;
+    pieces.push({ type: 'literal', start: cursor, end: password.length, cost });
+  }
+
+  return { total, pieces };
+}
+
+function applyStructuralCaps(baselineLog10, detections, scoreSegment) {
+  const password = detections[0]?._password;
+  if (!password) {
+    return { effectiveLog10: baselineLog10, adjustments: [], composition: null };
+  }
+
+  // Both local detector models and the final parse may need the same short
+  // segment. Cache zxcvbn calls by exact segment so combining detectors does
+  // not multiply the local runtime.
+  const scoreCache = new Map();
+  const scoreCached = (segment) => {
+    if (!scoreCache.has(segment)) scoreCache.set(segment, scoreSegment(segment));
+    return scoreCache.get(segment);
+  };
+
+  const options = detections
+    .map((detection) => ({ detection, option: buildLocalOption(detection, scoreCached) }))
+    .filter(({ option }) => option && option.start >= 0 && option.end > option.start && option.end <= password.length);
+
+  let best = {
+    score: baselineLog10,
+    options: [],
+    pieces: []
+  };
+
+  // There are currently at most five narrow detector families. Enumerating
+  // their subsets is cheaper and easier to inspect than a general parser,
+  // while allowing every non-overlapping structural span to be used together.
+  const optionCount = options.length;
+  for (let mask = 1; mask < (1 << optionCount); mask += 1) {
+    const selected = [];
+    for (let bit = 0; bit < optionCount; bit += 1) {
+      if (mask & (1 << bit)) selected.push(options[bit]);
+    }
+    selected.sort((a, b) => a.option.start - b.option.start || a.option.end - b.option.end);
+    const spans = selected.map(({ option }) => option);
+    if (!nonOverlapping(spans)) continue;
+
+    const parsed = scoreCompositeParse(password, spans, scoreCached);
+    // For ties, keep the more explanatory parse so the UI can show all
+    // independent structures responsible for the result.
+    if (parsed.total < best.score - 1e-9 ||
+      (Math.abs(parsed.total - best.score) <= 1e-9 && spans.length > best.options.length)) {
+      best = { score: parsed.total, options: spans, pieces: parsed.pieces };
+    }
+  }
+
+  const selectedIds = new Set(best.options.map((option) => option.id));
+  for (const { detection } of options) {
+    detection.selectedInComposite = selectedIds.has(detection.id);
+  }
+
+  const adjustments = best.options.length && best.score < baselineLog10
+    ? [{
+      detector: best.options.length === 1 ? best.options[0].id : 'composed-structural-parse',
+      from: baselineLog10,
+      to: best.score,
+      detectors: best.options.map((option) => option.id)
+    }]
+    : [];
+
+  return {
+    effectiveLog10: best.score,
+    adjustments,
+    composition: best.options.length ? {
+      detectorIds: best.options.map((option) => option.id),
+      detectorTitles: best.options.map((option) => option.title),
+      candidateLog10: best.score,
+      pieces: best.pieces
+    } : null
+  };
+}
+
+module.exports = {
+  detectStructure,
+  applyStructuralCaps,
+  arithmeticRunModelLog10,
+  isDigitArithmeticSequence
+};

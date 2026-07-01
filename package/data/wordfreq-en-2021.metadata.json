@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "source": "wordfreq large English list",
+  "sourceProject": "https://github.com/rspeer/wordfreq",
+  "dataSnapshot": "language usage through about 2021 (per upstream project)",
+  "extraction": "top_n_list('en', 250000) filtered to 3–32 character ASCII-like password tokens; preserved order is the local rank order",
+  "entryCount": 242974,
+  "note": "The full generated ordered token list is embedded in the published ESM module. See THIRD_PARTY_NOTICES.md for attribution and upstream data terms."
+}

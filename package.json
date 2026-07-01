@@ -1,0 +1,20 @@
+{
+  "name": "asdf-fox-repo",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": ["package", "demo"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "npm run test --workspace=asdf-fox",
+    "build": "npm run build --workspace=asdf-fox && npm run build --workspace=asdf-fox-demo",
+    "dev": "npm run dev --workspace=asdf-fox-demo",
+    "pack:library": "npm run build --workspace=asdf-fox && npm pack --workspace=asdf-fox --pack-destination ./artifacts",
+    "check:publish": "npm run test && npm run build && npm pack --workspace=asdf-fox --dry-run"
+  },
+  "devDependencies": {
+    "@zxcvbn-ts/core": "^4.1.2",
+    "@zxcvbn-ts/language-common": "^4.1.2",
+    "@zxcvbn-ts/language-en": "^4.1.1",
+    "esbuild": "^0.27.0"
+  }
+}

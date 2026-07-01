@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Try asdf-fox password-strength checks in your browser." />
+  <meta name="referrer" content="no-referrer" />
+  <title>asdf-fox demo</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <p class="eyebrow">DEMO</p>
+      <h1>asdf-fox</h1>
+      <p class="lede">Password-strength checks built on zxcvbn-ts, with extra checks for predictable patterns and common current words and names.</p>
+    </header>
+
+    <aside class="privacy-note demo-warning">
+      Use a toy password. Analysis runs in your browser. Turning on Pwned Passwords sends a five-character SHA-1 hash prefix to HIBP, never the password itself.
+    </aside>
+
+    <section class="panel entry-panel" aria-labelledby="entry-title">
+      <h2 id="entry-title">Try a password</h2>
+      <label for="password">Password</label>
+      <div class="input-row">
+        <input id="password" autocomplete="new-password" autocapitalize="off" spellcheck="false" type="password" placeholder="Try an example password" />
+        <button id="visibility" class="secondary" type="button" aria-label="Show password">Show</button>
+      </div>
+      <label for="context">Other words to check <span>(optional; username, site, or project words)</span></label>
+      <input id="context" autocomplete="off" autocapitalize="off" spellcheck="false" type="text" placeholder="alex, exampleapp" />
+      <label class="checkbox-row" for="breach-check"><input id="breach-check" type="checkbox" checked /> <span>Also check Pwned Passwords</span></label>
+      <div class="actions">
+        <button id="analyse" type="button">Analyze</button>
+        <span id="status" role="status" aria-live="polite"></span>
+      </div>
+      <div class="samples" aria-label="Examples">
+        <span>Examples:</span>
+        <button type="button" data-sample="12345678910111213141516171819202122232425">long number run</button>
+        <button type="button" data-sample="100103106109112115118121124127130133136139">step-3 run</button>
+        <button type="button" data-sample="flareon136137138139">sequence regression (4)</button>
+        <button type="button" data-sample="flareon136137138139140">sequence regression (5)</button>
+        <button type="button" data-sample="vaporeonvaporeo">truncated repeat</button>
+        <button type="button" data-sample="undertale">modern proper noun</button>
+        <button type="button" data-sample="chatgpt123">post-2021 entity</button>
+        <button type="button" data-sample="1a1b1c1d1e1f1g1h">interleaved pattern</button>
+        <button type="button" data-sample="password123">known weak example</button>
+      </div>
+    </section>
+
+    <section class="panel comparison-panel">
+      <h2>What this adds beyond plain zxcvbn + Pwned Passwords</h2>
+      <div class="difference-grid">
+        <div>
+          <h3>Plain zxcvbn + Pwned Passwords</h3>
+          <ul>
+            <li>Baseline zxcvbn score and feedback.</li>
+            <li>Exact breach checks for the full password.</li>
+          </ul>
+        </div>
+        <div>
+          <h3>asdf-fox adds</h3>
+          <ul>
+            <li>Extra checks for long arithmetic runs, truncated repeats, and simple interleaving patterns.</li>
+            <li>Additional local word and name coverage for current terms that plain zxcvbn may not know.</li>
+            <li>Small case and leetspeak adjustments for recognized words instead of treating them like random symbols.</li>
+            <li>Warnings for a few easy breached variants, not just exact full-password matches.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="empty" class="empty-state panel">Results will appear here.</section>
+    <section id="results" hidden aria-live="polite"></section>
+  </main>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
