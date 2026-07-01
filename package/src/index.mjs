@@ -2,6 +2,8 @@ import core from './index.js';
 
 export const analyzePassword = core.analyzePassword;
 export const analyzePasswordAsync = core.analyzePasswordAsync;
+export const grade = core.grade;
+// Kept for 0.1.x compatibility. New integrations should use grade.
 export const band = core.band;
 export const buildVariantCandidates = core.buildVariantCandidates;
 export const checkPwned = core.checkPwned;

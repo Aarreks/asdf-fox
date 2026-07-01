@@ -16,6 +16,22 @@ tools/     non-runtime tools used to generate or extend the vocabulary data
 There is one scoring implementation. The demo is just a browser consumer of the
 same package you publish.
 
+## Default grade scheme
+
+asdf-fox reports a conservative letter grade from its raw effective log10 estimate:
+
+```text
+A  >= 10.5  Acceptable
+B  >=  8.5  Warning
+C  >=  6.5  Critical warning
+D  >=  4.5  Fail
+F  <   4.5  Extreme fail
+```
+
+An exact Pwned Passwords match is shown as `F — Exposed password` regardless of the estimate.
+The grade is a presentation default, not permission to accept a password without considering
+breach status or account-specific context.
+
 ## Local development
 
 Requires Node 20+.

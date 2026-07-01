@@ -1,4 +1,4 @@
-import { context } from 'esbuild';
+﻿import { context } from 'esbuild';
 import { cp, mkdir, rm } from 'node:fs/promises';
 
 await rm('dist', { recursive: true, force: true });
@@ -17,4 +17,5 @@ const ctx = await context({
 });
 await ctx.watch();
 const server = await ctx.serve({ servedir: 'dist', port: 4173, host: '127.0.0.1' });
-console.log(`Demo: http://${server.host}:${server.port}`);
+console.log(`Demo: http://127.0.0.1:${server.port}`);
+

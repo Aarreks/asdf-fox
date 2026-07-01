@@ -11,7 +11,8 @@ function numericRunScore(segment) {
     homosex: 6.8415721851,
     gay: 2.8893017025,
     poreon: 6.0000004343,
-    va: 2.0043213738
+    va: 2.0043213738,
+    2: 1.079181246
   };
   return { guessesLog10: fixed[segment] ?? 20 };
 }
@@ -164,6 +165,21 @@ test('composes a local truncated repeat with a trailing arithmetic sequence', ()
 test('does not infer a local truncated repeat from a near miss', () => {
   const detections = detectStructure('flareonflabc13141516');
   assert.ok(!detections.some((detection) => detection.id === 'local-periodic-or-truncated-repeat'));
+});
+
+test('keeps a local truncated repeat when a one-character suffix follows it', () => {
+  const password = 'flareonflareo2';
+  const detections = detectStructure(password);
+  const repeat = detections.find((detection) => detection.id === 'local-periodic-or-truncated-repeat');
+
+  assert.ok(repeat, 'the one-character suffix must not hide the repeated span');
+  assert.equal(repeat.root, 'flareon');
+  assert.equal(repeat.continuation, 'flareo');
+  assert.deepEqual([repeat.spanStart, repeat.spanEnd], [0, 13]);
+
+  const combined = applyStructuralCaps(13.07, detections, numericRunScore);
+  assert.ok(combined.adjustments.length > 0, 'the local repeated span should lower the estimate');
+  assert.ok(combined.effectiveLog10 < 9, `${combined.effectiveLog10} did not discount the repeated root`);
 });
 
 const { findModernLexiconMatches, scoreLexiconAware } = require('../src/modernLexicon');

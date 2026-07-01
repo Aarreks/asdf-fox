@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { analyzePassword, analyzePasswordAsync, sha1, parseRangeResponse } = require('../src');
+const { analyzePassword, analyzePasswordAsync, grade, sha1, parseRangeResponse } = require('../src');
 
 test('public local API returns an inspectable result without network work', () => {
   const result = analyzePassword('flareon', { userInputs: ['alex'] });
@@ -9,6 +9,8 @@ test('public local API returns an inspectable result without network work', () =
   assert.equal(result.pwnedChecks.length, 0);
   assert.ok(result.modernLexicon.matches.some((match) => match.token === 'flareon'));
   assert.ok(Number.isFinite(result.score.effectiveLog10));
+  assert.equal(result.score.grade.letter, grade(result.score.effectiveLog10).letter);
+  assert.deepEqual(result.score.band, result.score.grade);
 });
 
 test('public async API accepts a supplied fetch implementation', async () => {

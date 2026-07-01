@@ -68,6 +68,34 @@ The result includes the native zxcvbn baseline, lexical/structural adjustments, 
 optional breach results, and per-stage timings. Treat numerical scores as estimates; use the
 explanation fields for policy/audit UI.
 
+### Default grades
+
+`result.score.grade` is a deliberately conservative presentation default based on the **raw**
+`effectiveLog10` estimate. The displayed estimate may be rounded, but grading is not.
+
+| Grade | Minimum `effectiveLog10` | Meaning |
+| --- | ---: | --- |
+| A | 10.5 | Acceptable |
+| B | 8.5 | Warning |
+| C | 6.5 | Critical warning |
+| D | 4.5 | Fail |
+| F | below 4.5 | Extreme fail |
+
+An exact Pwned Passwords match overrides the presentation grade to `F — Exposed password`.
+Applications should still enforce their own policy from the raw estimate plus breach state and
+context. For example, a sign-up flow may require Grade A and reject both exact breach matches
+and close-variant warnings.
+
+```js
+const acceptable =
+  result.score.grade.letter === 'A' &&
+  result.exactPwned?.breached !== true &&
+  result.closeVariantWarnings.length === 0;
+```
+
+`result.score.band` and the exported `band()` helper remain legacy aliases in the 0.1.x
+series. New integrations should use `result.score.grade` and `grade()`.
+
 ## Security boundary
 
 Do not collect submitted passwords for analytics or logging. A production sign-up system also

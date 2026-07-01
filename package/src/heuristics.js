@@ -118,7 +118,11 @@ function findLocalTruncatedPeriodicSpan(password) {
   //
   // Requiring a 4+ character copied prefix and at least 60% of the root
   // avoids treating a tiny accidental shared start as a repeat.
-  const maxRootLength = Math.min(24, Math.floor((n - 4) / 2));
+  // A local suffix can be as short as one character. The precise inner
+  // bounds below enforce root + copied prefix; dividing by two here would
+  // incorrectly skip `flareonflareo2` because the trailing `2` is not part
+  // of the repeated span.
+  const maxRootLength = Math.min(24, n - 4);
   for (let rootLength = maxRootLength; rootLength >= 4; rootLength -= 1) {
     const minContinuation = Math.max(4, Math.ceil(rootLength * 0.6));
     for (let firstStart = 0; firstStart + rootLength + minContinuation <= n; firstStart += 1) {

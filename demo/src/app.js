@@ -79,8 +79,8 @@ function render(data) {
   const structureSummary = data.score.changedByStructure ? 'lowered estimate' : 'no change';
 
   results.innerHTML = `
-    <section class="summary panel ${escapeHtml(data.score.band.level)}">
-      <div><p class="eyebrow">RESULT</p><h2>${escapeHtml(data.score.band.label)}</h2><p class="score">log<sub>10</sub> guesses: <strong>${data.score.effectiveLog10}</strong></p></div>
+    <section class="summary panel ${escapeHtml(data.score.grade.level)}">
+      <div><p class="eyebrow">RESULT</p><h2>Grade ${escapeHtml(data.score.grade.letter)}</h2><p class="grade-meaning">${escapeHtml(data.score.grade.label)}</p><p class="score">log<sub>10</sub> guesses: <strong>${data.score.effectiveLog10}</strong></p></div>
       <dl>
         <div><dt>Baseline</dt><dd>log<sub>10</sub> ${data.score.baselineLog10}</dd></div>
         <div><dt>Words and names</dt><dd>${vocabularySummary}</dd></div>

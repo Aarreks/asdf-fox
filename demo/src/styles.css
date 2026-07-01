@@ -29,6 +29,7 @@ button:disabled { cursor: wait; opacity: .65; }
 .privacy-note { margin: 1rem 0; border-left: 3px solid #83e5bd; background: #172222; color: #c6d6d4; padding: .9rem 1rem; border-radius: 0 10px 10px 0; line-height: 1.5; }
 .empty-state { color: #a7b5bc; }
 #results { display: grid; gap: 1rem; }
+#empty, #results { margin-bottom: 1rem; }
 .summary { display: flex; gap: 2rem; justify-content: space-between; align-items: start; }
 .summary h2 { font-size: 1.75rem; margin-bottom: .4rem; }
 .score { font-size: 1.1rem; margin: 0; }
@@ -36,7 +37,11 @@ button:disabled { cursor: wait; opacity: .65; }
 .summary dl { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(125px, 1fr)); gap: .85rem 1.5rem; }
 .summary dl div { border-left: 2px solid #45545d; padding-left: .65rem; }
 dt { color: #95a7b0; font-size: .74rem; text-transform: uppercase; letter-spacing: .05em; } dd { margin: .2rem 0 0; }
-.reject { border-color: #e46767; } .very-weak, .weak { border-color: #eeac5b; } .strong, .very-strong { border-color: #83e5bd; }
+.grade-meaning { margin: 0 0 .45rem; color: #c4d0d5; font-weight: 650; }
+.grade-a { border-color: #83e5bd; }
+.grade-b { border-color: #d7c26b; }
+.grade-c { border-color: #ed9f5e; }
+.grade-d, .grade-f, .grade-exposed { border-color: #e46767; }
 .grid-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
 .notice { padding: .85rem; border-radius: 9px; margin: 0; } .notice.danger { background: #382022; color: #ffd7d7; } .notice.good { background: #173025; color: #c5f5d8; } .notice.neutral { background: #2c2e2a; color: #e7e1c7; }
 .warning-list { margin: 0; padding-left: 1.2rem; } .warning-list li { margin-bottom: .65rem; line-height: 1.45; }

@@ -14,13 +14,30 @@ function round(value) {
   return Number(value.toFixed(2));
 }
 
-function band(log10Guesses, exactPwned) {
-  if (exactPwned) return { label: 'Rejected: exposed password', level: 'reject' };
-  if (log10Guesses < 6) return { label: 'Very weak', level: 'very-weak' };
-  if (log10Guesses < 9) return { label: 'Weak', level: 'weak' };
-  if (log10Guesses < 11.5) return { label: 'Adequate', level: 'adequate' };
-  if (log10Guesses < 13.5) return { label: 'Strong', level: 'strong' };
-  return { label: 'Very strong', level: 'very-strong' };
+function grade(log10Guesses, exactPwned = false) {
+  if (!Number.isFinite(log10Guesses)) throw new TypeError('log10Guesses must be finite.');
+
+  if (exactPwned) {
+    return { letter: 'F', label: 'Exposed password', level: 'grade-exposed', minimumLog10: null };
+  }
+  if (log10Guesses >= 10.5) {
+    return { letter: 'A', label: 'Acceptable', level: 'grade-a', minimumLog10: 10.5 };
+  }
+  if (log10Guesses >= 8.5) {
+    return { letter: 'B', label: 'Warning', level: 'grade-b', minimumLog10: 8.5 };
+  }
+  if (log10Guesses >= 6.5) {
+    return { letter: 'C', label: 'Critical warning', level: 'grade-c', minimumLog10: 6.5 };
+  }
+  if (log10Guesses >= 4.5) {
+    return { letter: 'D', label: 'Fail', level: 'grade-d', minimumLog10: 4.5 };
+  }
+  return { letter: 'F', label: 'Extreme fail', level: 'grade-f', minimumLog10: null };
+}
+
+// Kept as a legacy alias for 0.1.x consumers. New integrations should use grade().
+function band(log10Guesses, exactPwned = false) {
+  return grade(log10Guesses, exactPwned);
 }
 
 function validate(password, options) {
@@ -73,14 +90,17 @@ function createBaseResult(password, options = {}) {
   timings.push({ label: 'limited variant construction', ms: round(now() - variantsStarted) });
 
   const currentLog10 = structural.effectiveLog10;
+  const scoreGrade = grade(currentLog10, false);
   return {
-    _internal: { candidates, totalStarted },
+    _internal: { candidates, totalStarted, effectiveLog10Raw: currentLog10 },
     score: {
       baselineLog10: round(baseline.guessesLog10),
       lexiconLog10: round(lexical.effectiveLog10),
       effectiveLog10: round(currentLog10),
       baselineZxcvbnScore: baseline.score,
-      band: band(currentLog10, false),
+      grade: scoreGrade,
+      // Deprecated legacy alias. It returns the same grade object in 0.1.x.
+      band: scoreGrade,
       changedByLexicon: lexical.changed,
       changedByStructure: structural.adjustments.length > 0
     },
@@ -136,7 +156,10 @@ function finish(result, pwned) {
   const exact = pwned.checks.find((check) => check.kind === 'exact');
   const closeVariants = pwned.checks.filter((check) => check.kind !== 'exact' && check.breached);
   const unavailable = pwned.checks.some((check) => check.state === 'unavailable');
-  result.score.band = band(result.score.effectiveLog10, Boolean(exact?.breached));
+  const scoreGrade = grade(result._internal.effectiveLog10Raw, Boolean(exact?.breached));
+  result.score.grade = scoreGrade;
+  // Deprecated legacy alias. It returns the same grade object in 0.1.x.
+  result.score.band = scoreGrade;
   result.exactPwned = exact ? {
     state: exact.state,
     breached: exact.breached,
@@ -180,4 +203,4 @@ async function analyzePasswordAsync(password, options = {}) {
   return finish(result, pwned);
 }
 
-module.exports = { analyzePassword, analyzePasswordAsync, band };
+module.exports = { analyzePassword, analyzePasswordAsync, grade, band };
