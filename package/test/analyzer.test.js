@@ -58,6 +58,52 @@ test('extending an already-established numeric run does not cause a downward sco
   assert.ok(fiveTerms - fourTerms < 0.25, `${fiveTerms} unexpectedly far above ${fourTerms}`);
 });
 
+test('detects a repeated token with an arithmetic counter', () => {
+  const password = 'gay1gay2gay3gay4';
+  const detections = detectStructure(password);
+  const numbered = detections.find((detection) => detection.id === 'numbered-repeated-token-sequence');
+
+  assert.ok(numbered);
+  assert.equal(numbered.root, 'gay');
+  assert.equal(numbered.start, 1);
+  assert.equal(numbered.step, 1);
+  assert.equal(numbered.terms, 4);
+  assert.deepEqual([numbered.spanStart, numbered.spanEnd], [0, password.length]);
+
+  const capped = applyStructuralCaps(16, detections, numericRunScore);
+  assert.ok(capped.effectiveLog10 < 7, `${capped.effectiveLog10} did not replace repeated blocks with one counter template`);
+  assert.ok(capped.effectiveLog10 > numericRunScore('gay').guessesLog10, `${capped.effectiveLog10} discarded counter construction cost`);
+  assert.ok(capped.composition?.detectorIds.includes('numbered-repeated-token-sequence'));
+});
+
+test('finds numbered repeated-token templates inside surrounding literal text', () => {
+  const password = 'Xcat7cat9cat11Y';
+  const detections = detectStructure(password);
+  const numbered = detections.find((detection) => detection.id === 'numbered-repeated-token-sequence');
+
+  assert.ok(numbered);
+  assert.equal(numbered.root, 'cat');
+  assert.equal(numbered.start, 7);
+  assert.equal(numbered.step, 2);
+  assert.equal(numbered.terms, 3);
+  assert.deepEqual([numbered.spanStart, numbered.spanEnd], [1, password.length - 1]);
+});
+
+test('does not infer a numbered repeated-token template from non-arithmetic or mismatched blocks', () => {
+  for (const password of ['gay1gay2gay4', 'gay1guy2gay3', 'ga1ga2ga3']) {
+    const detections = detectStructure(password);
+    assert.ok(!detections.some((detection) => detection.id === 'numbered-repeated-token-sequence'), password);
+  }
+});
+
+test('detects numbered repeated-token templates across case changes', () => {
+  const detections = detectStructure('Gay1gAY2GAY3');
+  const numbered = detections.find((detection) => detection.id === 'numbered-repeated-token-sequence');
+  assert.ok(numbered);
+  assert.equal(numbered.terms, 3);
+  assert.equal(numbered.step, 1);
+});
+
 test('detects truncated periodic root', () => {
   const detections = detectStructure('vaporeonvaporeo');
   assert.ok(detections.some((detection) => detection.id === 'periodic-or-truncated-repeat'));

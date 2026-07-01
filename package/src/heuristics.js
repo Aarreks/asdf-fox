@@ -78,6 +78,76 @@ function findNumericSequence(password) {
   return null;
 }
 
+function readDigits(password, start) {
+  let end = start;
+  while (end < password.length && /\d/u.test(password[end])) end += 1;
+  if (end === start) return null;
+  return {
+    text: password.slice(start, end),
+    value: Number(password.slice(start, end)),
+    end
+  };
+}
+
+function findNumberedRepeatedToken(password) {
+  // Detect a local template of the form:
+  //   token + n, token + (n + step), token + (n + 2 * step), ...
+  // The repeated alphabetic token and the arithmetic counter must both be
+  // explicit. This is deliberately not a general word parser.
+  const n = password.length;
+  if (n < 12) return null;
+
+  let best = null;
+  for (let spanStart = 0; spanStart < n; spanStart += 1) {
+    if (!/[A-Za-z]/u.test(password[spanStart])) continue;
+
+    let tokenEnd = spanStart;
+    while (tokenEnd < n && /[A-Za-z]/u.test(password[tokenEnd])) tokenEnd += 1;
+    const token = password.slice(spanStart, tokenEnd);
+    if (token.length < 3 || token.length > 32) continue;
+
+    const first = readDigits(password, tokenEnd);
+    if (!first || first.text.length > 6 || !Number.isSafeInteger(first.value)) continue;
+
+    const normalized = token.toLocaleLowerCase('en-US');
+    const values = [first.value];
+    let cursor = first.end;
+
+    while (cursor < n && password.slice(cursor, cursor + token.length).toLocaleLowerCase('en-US') === normalized) {
+      const next = readDigits(password, cursor + token.length);
+      if (!next || next.text.length > 6 || !Number.isSafeInteger(next.value)) break;
+      values.push(next.value);
+      cursor = next.end;
+    }
+
+    if (values.length < 3) continue;
+    const step = values[1] - values[0];
+    if (step === 0 || Math.abs(step) > 12) continue;
+    if (!values.every((value, index) => index === 0 || value === values[0] + (index * step))) continue;
+
+    const candidate = {
+      token,
+      start: values[0],
+      step,
+      terms: values.length,
+      width: first.text.length,
+      spanStart,
+      spanEnd: cursor
+    };
+
+    // Prefer the widest explicit template. For equal spans, prefer more
+    // repeated terms so a later suffix cannot displace a fuller explanation.
+    const candidateLength = candidate.spanEnd - candidate.spanStart;
+    const bestLength = best ? best.spanEnd - best.spanStart : -1;
+    if (!best || candidateLength > bestLength ||
+      (candidateLength === bestLength && candidate.terms > best.terms)) {
+      best = candidate;
+    }
+  }
+
+  return best;
+}
+
 function findPeriodicPrefix(password) {
   const n = password.length;
   if (n < 9) return null;
@@ -279,6 +349,24 @@ function detectStructure(password) {
     });
   }
 
+  const numberedRepeat = findNumberedRepeatedToken(password);
+  if (numberedRepeat) {
+    detections.push({
+      id: 'numbered-repeated-token-sequence',
+      severity: 'high',
+      title: 'Repeated token with arithmetic counter',
+      detail: `The token “${numberedRepeat.token}” repeats ${numberedRepeat.terms} times with numbers beginning at ${numberedRepeat.start} and step ${numberedRepeat.step}. The token and counter are chosen once, rather than independently for every copy.`,
+      root: numberedRepeat.token,
+      start: numberedRepeat.start,
+      step: numberedRepeat.step,
+      terms: numberedRepeat.terms,
+      width: numberedRepeat.width,
+      spanStart: numberedRepeat.spanStart,
+      spanEnd: numberedRepeat.spanEnd,
+      capLog10: null
+    });
+  }
+
   const periodic = findPeriodicPrefix(password);
   if (periodic) {
     detections.push({
@@ -363,6 +451,21 @@ function buildLocalOption(detection, scoreSegment) {
   if (detection.id === 'concatenated-numeric-sequence') {
     cost = detection.runModelLog10;
     detection.sequenceModelLog10 = cost;
+    detection.structuralCandidateLog10 = cost;
+  }
+
+  if (detection.id === 'numbered-repeated-token-sequence') {
+    const rootLog10 = segmentLog10(scoreSegment, detection.root);
+    // Choosing the root once plus the compact arithmetic-counter model is
+    // cheaper than choosing each token-number block independently. The
+    // numeric model includes start, step, term-count, and construction cost.
+    cost = rootLog10 + arithmeticRunModelLog10({
+      width: detection.width,
+      step: detection.step,
+      terms: detection.terms
+    });
+    detection.rootBaselineLog10 = rootLog10;
+    detection.sequenceModelLog10 = cost - rootLog10;
     detection.structuralCandidateLog10 = cost;
   }
 
@@ -475,7 +578,7 @@ function applyStructuralCaps(baselineLog10, detections, scoreSegment) {
     pieces: []
   };
 
-  // There are currently at most five narrow detector families. Enumerating
+  // There is a small fixed set of narrow detector families. Enumerating
   // their subsets is cheaper and easier to inspect than a general parser,
   // while allowing every non-overlapping structural span to be used together.
   const optionCount = options.length;
@@ -527,5 +630,6 @@ module.exports = {
   detectStructure,
   applyStructuralCaps,
   arithmeticRunModelLog10,
-  isDigitArithmeticSequence
+  isDigitArithmeticSequence,
+  findNumberedRepeatedToken
 };
