@@ -6,6 +6,8 @@ zxcvbn-ts baseline with:
 - a local modern-vocabulary overlay for ranked proper nouns and contemporary names;
 - targeted detectors for concatenated arithmetic runs, repeat/truncation constructions,
   and simple interleaved streams;
+- a bundled exact table of the 100,000 most frequent cleaned English two-word entries,
+  used for bounded directional word-pair corrections after a full local word segmentation;
 - deliberately small case-mask and standard-leet bonuses **only after** a bounded known-token
   parse is selected;
 - an opt-in Pwned Passwords range check and bounded low-cost mutation checks.
@@ -65,8 +67,23 @@ await analyzePasswordAsync(password, {
 ## Result contract
 
 The result includes the native zxcvbn baseline, lexical/structural adjustments, selected spans,
-optional breach results, and per-stage timings. Treat numerical scores as estimates; use the
-explanation fields for policy/audit UI.
+common-bigram evidence, optional breach results, and per-stage timings. Treat numerical scores
+as estimates; use the explanation fields for policy/audit UI.
+
+### Common-bigram adjustment
+
+`commonBigramPatterns` is local-only and exact. It uses a filtered 100,000-entry table generated
+from lowercase alphabetic entries in Peter Norvig's `count_2w.txt` distribution. It recovers
+recognized word spans inside an alphabetic run even when surrounding literal characters are not
+recognized as words. Those surrounding characters remain part of the password and receive no
+bigram discount. A pair must still be exactly adjacent or separated by one explicit separator such
+as `_` or `-`; an uncovered internal letter never becomes an implied boundary. A selected
+directional pair retains the higher-cost word and a `0.15 log10` order cost, so its reduction
+cannot exceed the lower-cost word contribution. Adjacent selected pairs are matched without
+overlap, so a middle word cannot be discounted twice.
+
+This is a bounded lexical correction, not quote/lyric recognition or a semantic claim. The exact
+pairs and reductions are returned in `commonBigramPatterns`.
 
 ### Default grades
 

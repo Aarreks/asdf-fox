@@ -28,3 +28,16 @@ information, not legal advice.
 The optional breach check queries HIBP's public Pwned Passwords range API. The
 implementation hashes locally and sends only a five-character SHA-1 hash prefix.
 Pwned Passwords API documentation: https://haveibeenpwned.com/API/v3#PwnedPasswords
+
+## Filtered common-bigram table
+
+`data/common-bigrams-top100k.json` is a generated filtered table derived from Peter Norvig's
+`count_2w.txt` distribution, which Norvig describes as derived from the Google Web Trillion Word
+Corpus. The package keeps the 100,000 highest-count rows whose two tokens are lowercase ASCII
+alphabetic words, together with their source counts.
+
+- Upstream landing page: https://norvig.com/ngrams/
+- Generated-artifact metadata is embedded in `data/common-bigrams-top100k.json`.
+
+Review source-data provenance and redistribution obligations before publishing a modified table.
+This notice records provenance; it is not legal advice.

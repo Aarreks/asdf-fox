@@ -3,6 +3,7 @@
 const { zxcvbn, parseContext } = require('./zxcvbn');
 const { metadata: modernLexiconMetadata, scoreLexiconAware } = require('./modernLexicon');
 const { scoreRecoveredLocalDictionaryParse } = require('./localDictionaryRecovery');
+const { metadata: commonBigramMetadata, scoreCommonBigramPatterns } = require('./commonBigrams');
 const { detectStructure, applyStructuralCaps } = require('./heuristics');
 const { buildVariantCandidates } = require('./variants');
 const { checkPwned } = require('./pwned');
@@ -96,7 +97,11 @@ function createBaseResult(password, options = {}) {
   const candidates = buildVariantCandidates(password);
   timings.push({ label: 'limited variant construction', ms: round(now() - variantsStarted) });
 
-  const currentLog10 = structural.effectiveLog10;
+  const collocationsStarted = now();
+  const commonBigrams = scoreCommonBigramPatterns(password, structural.effectiveLog10);
+  timings.push({ label: 'common bigram adjustment', ms: round(now() - collocationsStarted) });
+
+  const currentLog10 = commonBigrams.effectiveLog10;
   const scoreGrade = grade(currentLog10, false);
   return {
     _internal: { candidates, totalStarted, effectiveLog10Raw: currentLog10 },
@@ -110,7 +115,8 @@ function createBaseResult(password, options = {}) {
       band: scoreGrade,
       changedByLexicon: lexical.changed,
       changedByLocalDictionaryRecovery: localDictionaryRecovery.changed,
-      changedByStructure: structural.adjustments.length > 0
+      changedByStructure: structural.adjustments.length > 0,
+      changedByCommonBigrams: commonBigrams.changed
     },
     contextTokensUsed: userInputs.length,
     modernLexicon: {
@@ -131,6 +137,31 @@ function createBaseResult(password, options = {}) {
       localSpanLog10: round(localDictionaryRecovery.composition.localSpanLog10),
       dictionaryCoverage: round(localDictionaryRecovery.composition.dictionaryCoverage),
       dictionaryPieces: localDictionaryRecovery.composition.dictionaryPieces
+    } : null,
+    commonBigramPatterns: commonBigrams.composition ? {
+      ...commonBigramMetadata(),
+      candidateLog10: round(commonBigrams.composition.candidateLog10),
+      totalReductionLog10: round(commonBigrams.composition.totalReductionLog10),
+      patterns: commonBigrams.composition.patterns.map((pattern) => ({
+        words: pattern.words,
+        uncoveredCharacters: pattern.uncoveredCharacters,
+        reductionLog10: round(pattern.reductionLog10),
+        hits: pattern.hits.map((hit) => ({
+          left: hit.left,
+          right: hit.right,
+          count: hit.count,
+          separator: hit.separator,
+          reductionLog10: round(hit.reductionLog10)
+        })),
+        selectedPairs: pattern.selectedPairs.map((pair) => ({
+          left: pair.left,
+          right: pair.right,
+          count: pair.count,
+          separator: pair.separator,
+          reductionLog10: round(pair.reductionLog10),
+          pairFloorLog10: round(pair.pairFloorLog10)
+        }))
+      }))
     } : null,
     exactPwned: null,
     closeVariantWarnings: [],
@@ -166,6 +197,7 @@ function createBaseResult(password, options = {}) {
       variantMeaning: 'A close-variant hit is a bounded attacker-cost warning, not proof that the entered password itself was exposed.',
       modernLexicon: 'The local vocabulary overlay is not a breach result. It proposes an alternative parse using ranked contemporary tokens plus ordinary zxcvbn scoring for every literal gap. Frequency-ranked entries come from a wordfreq English snapshot through about 2021; newer seed entries receive deliberately conservative fallback ranks.',
       localDictionaryRecovery: 'A bounded local recovery pass rechecks up to three generic spans selected by zxcvbn. It applies only when a local zxcvbn parse finds dictionary coverage over most of that span and materially lowers its estimate. It does not score phrases or infer semantic associations.',
+      commonBigrams: 'The optional common-bigram stage is a local, exact lookup over a filtered 100,000-entry count table. It can recover a known pair within an alphabetic run while retaining surrounding literal residue in the baseline estimate. It never bridges an uncovered internal character. Each pair is discounted by at most the easier word cost, retains an explicit directional order cost, and cannot reuse a middle word in adjacent matches. It is a bounded lexical adjustment, not phrase recognition or a semantic score.',
       privacy: 'Only the first five characters of each candidate SHA-1 hash are sent to HIBP. The app never sends the plaintext password to HIBP and does not log or persist it.'
     }
   };
