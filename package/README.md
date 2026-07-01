@@ -70,21 +70,31 @@ explanation fields for policy/audit UI.
 
 ### Default grades
 
-`result.score.grade` is a deliberately conservative presentation default based on the **raw**
-`effectiveLog10` estimate. The displayed estimate may be rounded, but grading is not.
+`result.score.effectiveLog10` is intentionally rounded to two decimal places before it is returned. `result.score.grade` is assigned from that same rounded value.
 
-| Grade | Minimum `effectiveLog10` | Meaning |
-| --- | ---: | --- |
-| A | 10.5 | Acceptable |
-| B | 8.5 | Warning |
-| C | 6.5 | Critical warning |
-| D | 4.5 | Fail |
-| F | below 4.5 | Extreme fail |
+This rounding is deliberate, not display-only. Password-strength estimates are approximate, and zxcvbn-style estimators can place nearly identical brute-force-looking passwords on opposite sides of a whole-number `log10` boundary even when neither password has a different detected pattern.
 
-An exact Pwned Passwords match overrides the presentation grade to `F — Exposed password`.
-Applications should still enforce their own policy from the raw estimate plus breach state and
-context. For example, a sign-up flow may require Grade A and reject both exact breach matches
-and close-variant warnings.
+Returning a two-decimal estimate creates a small guard band around common threshold checks. For example:
+
+```js
+result.score.effectiveLog10 >= 10
+```
+
+accepts an internal estimate that rounds to `10.00`, rather than distinguishing a meaningless difference such as `9.999...` versus `10.000...`.
+
+asdf-fox's default grade thresholds deliberately use half-log positions rather than whole-number `log10` cutoffs:
+
+| Grade | Minimum `effectiveLog10` | Meaning          |
+| ----- | -----------------------: | ---------------- |
+| A     |                     10.5 | Acceptable       |
+| B     |                      8.5 | Warning          |
+| C     |                      6.5 | Critical warning |
+| D     |                      4.5 | Fail             |
+| F     |                below 4.5 | Extreme fail     |
+
+The grade is a conservative default policy result. Grade A is the package's default acceptable outcome. An exact Pwned Passwords match overrides the presentation grade to `F: Exposed password`.
+
+For a typical sign-up flow, require Grade A and separately reject exact breach matches and close-variant warnings:
 
 ```js
 const acceptable =
@@ -93,8 +103,7 @@ const acceptable =
   result.closeVariantWarnings.length === 0;
 ```
 
-`result.score.band` and the exported `band()` helper remain legacy aliases in the 0.1.x
-series. New integrations should use `result.score.grade` and `grade()`.
+`result.score.band` and the exported `band()` helper remain legacy aliases in the 0.1.x series. New integrations should use `result.score.grade` and `grade()`.
 
 ## Security boundary
 
