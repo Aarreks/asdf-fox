@@ -86,7 +86,10 @@ function createBaseResult(password, options = {}) {
   const preStructuralLog10 = Math.min(lexical.effectiveLog10, localDictionaryRecovery.effectiveLog10);
 
   const structuralStarted = now();
-  const detections = detectStructure(password);
+  // Pass the cached baseline scorer so the interleaving detector can ask
+  // zxcvbn whether both recovered every-other-character streams are already
+  // recognizable structures, rather than limiting itself to hard-coded runs.
+  const detections = detectStructure(password, baseScore);
   const structural = applyStructuralCaps(preStructuralLog10, detections, (root) => {
     const rootResult = scoreLexiconAware(root, baseScore);
     return { guessesLog10: rootResult.effectiveLog10 };

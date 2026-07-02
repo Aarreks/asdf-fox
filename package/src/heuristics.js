@@ -386,6 +386,11 @@ function findEmbeddedRepeatedChunk(password) {
   return null;
 }
 
+const MIN_INTERLEAVED_SPAN_LENGTH = 10;
+const MIN_INTERLEAVED_STREAM_LENGTH = 4;
+const MAX_INTERLEAVED_STREAM_TAIL = 2;
+const INTERLEAVE_LAYOUT_LOG10 = 1.2;
+
 function monotoneAlpha(stream) {
   if (stream.length < 4 || !/^[A-Za-z]+$/u.test(stream)) return false;
   const codes = [...stream.toLowerCase()].map((ch) => ch.charCodeAt(0));
@@ -407,32 +412,114 @@ function isSimpleStream(stream) {
   return constant || monotoneAlpha(stream) || monotoneDigits(stream);
 }
 
-function findInterleavedStructure(password) {
-  if (password.length < 10) return null;
+function deinterleave(span) {
+  let first = '';
+  let second = '';
+  for (let index = 0; index < span.length; index += 1) {
+    if (index % 2 === 0) first += span[index];
+    else second += span[index];
+  }
+  return { first, second };
+}
 
-  // Keep the longest established local interleaving rather than requiring the
-  // entire password to remain perfect. A human may append unrelated material
-  // after an unmistakable alternating construction:
-  //   a7b7c7d7e7f7g + g
-  // The final g stays literal material; it must not erase the already-simple
-  // alpha and constant-digit streams.
+function recognizedPrefix(stream, score) {
+  const sequence = Array.isArray(score?.sequence) ? score.sequence : [];
+  if (!sequence.length) return null;
+
+  // The general detector uses zxcvbn's selected parse. A recovered stream is
+  // eligible only when it is entirely non-generic apart from a very short
+  // terminal literal tail. This prevents two unrelated alternating strings
+  // from being relabelled as an interleaving merely because they split in two.
+  let cursor = 0;
+  for (let index = 0; index < sequence.length; index += 1) {
+    const piece = sequence[index];
+    if (piece.i !== cursor) return null;
+    if (piece.pattern === 'bruteforce') {
+      if (index !== sequence.length - 1) return null;
+      const tailLength = stream.length - cursor;
+      if (tailLength > MAX_INTERLEAVED_STREAM_TAIL) return null;
+      break;
+    }
+    cursor = piece.j + 1;
+  }
+
+  const tailLength = stream.length - cursor;
+  const core = stream.slice(0, cursor);
+  if (core.length < MIN_INTERLEAVED_STREAM_LENGTH) return null;
+  return { core, tailLength };
+}
+
+function findScoredInterleavedPrefix(password, scoreSegment) {
+  if (typeof scoreSegment !== 'function' || password.length < MIN_INTERLEAVED_SPAN_LENGTH) return null;
+
+  const scoreCache = new Map();
+  const scoreCached = (text) => {
+    if (!scoreCache.has(text)) scoreCache.set(text, scoreSegment(text));
+    return scoreCache.get(text);
+  };
+
+  // Score only the full two recovered streams, then (at most) their recovered
+  // cores. This keeps this general detector bounded rather than rescoring every
+  // possible substring pair. A bounded residue at the end remains literal.
+  const full = deinterleave(password);
+  const firstPrefix = recognizedPrefix(full.first, scoreCached(full.first));
+  const secondPrefix = recognizedPrefix(full.second, scoreCached(full.second));
+  if (!firstPrefix || !secondPrefix) return null;
+
+  let trim = 0;
+  const maxTrim = firstPrefix.tailLength + secondPrefix.tailLength;
+  for (let candidate = 1; candidate <= maxTrim; candidate += 1) {
+    const coreSpan = password.slice(0, password.length - candidate);
+    if (coreSpan.length < MIN_INTERLEAVED_SPAN_LENGTH) break;
+    const core = deinterleave(coreSpan);
+    if (core.first === firstPrefix.core && core.second === secondPrefix.core) trim = candidate;
+  }
+
+  const spanEnd = password.length - trim;
+  const span = password.slice(0, spanEnd);
+  const { first, second } = deinterleave(span);
+  if (first.length < MIN_INTERLEAVED_STREAM_LENGTH || second.length < MIN_INTERLEAVED_STREAM_LENGTH) return null;
+
+  const firstLog10 = segmentLog10(scoreCached, first);
+  const secondLog10 = segmentLog10(scoreCached, second);
+  const streamModelLog10 = firstLog10 + secondLog10 + INTERLEAVE_LAYOUT_LOG10;
+  const spanLog10 = segmentLog10(scoreCached, span);
+
+  // The construction must beat zxcvbn's ordinary score for the same contiguous
+  // span by a material amount. The fixed 1.2-log layout cost covers choosing an
+  // alternating layout instead of treating the two streams as one free parse.
+  if (!(streamModelLog10 + 0.75 < spanLog10)) return null;
+
+  return {
+    first,
+    second,
+    firstLog10,
+    secondLog10,
+    spanStart: 0,
+    spanEnd,
+    candidateLog10: streamModelLog10,
+    scorerAware: true
+  };
+}
+
+function findSimpleInterleavedStructure(password) {
+  if (password.length < MIN_INTERLEAVED_SPAN_LENGTH) return null;
+
+  // Retain the prior deterministic local rule. It preserves simple spans with
+  // unrelated material on either side, including callers of detectStructure()
+  // that intentionally do not supply a zxcvbn scorer.
   let best = null;
-
-  for (let spanStart = 0; spanStart <= password.length - 10; spanStart += 1) {
-    for (let spanEnd = password.length; spanEnd >= spanStart + 10; spanEnd -= 1) {
+  for (let spanStart = 0; spanStart <= password.length - MIN_INTERLEAVED_SPAN_LENGTH; spanStart += 1) {
+    for (let spanEnd = password.length; spanEnd >= spanStart + MIN_INTERLEAVED_SPAN_LENGTH; spanEnd -= 1) {
       const span = password.slice(spanStart, spanEnd);
-
       for (const offset of [0, 1]) {
         const first = [...span].filter((_, index) => index % 2 === offset).join('');
         const second = [...span].filter((_, index) => index % 2 !== offset).join('');
         if (!isSimpleStream(first) || !isSimpleStream(second)) continue;
 
-        const candidate = { first, second, spanStart, spanEnd };
+        const candidate = { first, second, spanStart, spanEnd, candidateLog10: null, scorerAware: false };
         const candidateLength = candidate.spanEnd - candidate.spanStart;
         const bestLength = best ? best.spanEnd - best.spanStart : -1;
-
-        // Prefer the widest span. For ties, keep the earlier span so a suffix
-        // cannot displace an equally explanatory prefix.
         if (!best || candidateLength > bestLength ||
           (candidateLength === bestLength && candidate.spanStart < best.spanStart)) {
           best = candidate;
@@ -440,8 +527,11 @@ function findInterleavedStructure(password) {
       }
     }
   }
-
   return best;
+}
+
+function findInterleavedStructure(password, scoreSegment) {
+  return findScoredInterleavedPrefix(password, scoreSegment) || findSimpleInterleavedStructure(password);
 }
 
 function attachSource(detections, password) {
@@ -455,7 +545,7 @@ function attachSource(detections, password) {
   return detections;
 }
 
-function detectStructure(password) {
+function detectStructure(password, scoreSegment) {
   const detections = [];
   const numeric = findNumericSequence(password);
   if (numeric) {
@@ -574,16 +664,22 @@ function detectStructure(password) {
     });
   }
 
-  const interleaved = findInterleavedStructure(password);
+  const interleaved = findInterleavedStructure(password, scoreSegment);
   if (interleaved) {
+    const scorerAware = interleaved.scorerAware === true;
     detections.push({
       id: 'interleaved-structured-streams',
       severity: 'medium',
-      title: 'Interleaved simple streams',
-      detail: 'Every-other-character streams are each constant or monotone. This catches constructions like 1a1b1c1d… that do not look like one ordinary sequence.',
+      title: scorerAware ? 'Interleaved predictable streams' : 'Interleaved simple streams',
+      detail: scorerAware
+        ? `Every-other-character streams “${interleaved.first}” and “${interleaved.second}” each have a lower-cost zxcvbn parse. Their scores are charged independently with a fixed interleaving-layout cost.`
+        : 'Every-other-character streams are each constant or monotone. This catches constructions like 1a1b1c1d… that do not look like one ordinary sequence.',
+      first: interleaved.first,
+      second: interleaved.second,
+      scorerAware,
       spanStart: interleaved.spanStart,
       spanEnd: interleaved.spanEnd,
-      capLog10: 5.2
+      capLog10: scorerAware ? null : 5.2
     });
   }
 
@@ -629,6 +725,16 @@ function buildLocalOption(detection, scoreSegment) {
     detection.numberFieldBaselineLog10 = numberFieldLog10;
     detection.numericFieldsBaselineLog10 = numericFieldsLog10;
     detection.templateModelLog10 = templateLog10;
+    detection.structuralCandidateLog10 = cost;
+  }
+
+  if (detection.id === 'interleaved-structured-streams' && detection.scorerAware) {
+    const firstLog10 = segmentLog10(scoreSegment, detection.first);
+    const secondLog10 = segmentLog10(scoreSegment, detection.second);
+    cost = firstLog10 + secondLog10 + INTERLEAVE_LAYOUT_LOG10;
+    detection.firstStreamBaselineLog10 = firstLog10;
+    detection.secondStreamBaselineLog10 = secondLog10;
+    detection.interleaveLayoutLog10 = INTERLEAVE_LAYOUT_LOG10;
     detection.structuralCandidateLog10 = cost;
   }
 
