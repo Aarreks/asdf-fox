@@ -613,6 +613,14 @@ function recoverRecognizedInterleavedCore(span, period, prefixes) {
   return null;
 }
 
+function partialInterleaveEvidenceLog10(period, edgePrefix, edgeSuffix) {
+  // A partial weave has exactly one random-looking residue class. Charge for
+  // choosing which of the period classes it was, and (for a bounded local
+  // span) for choosing the exposed edge layout.
+  const edgeChoices = edgePrefix === 0 && edgeSuffix === 0 ? 1 : 4;
+  return log10(period) + log10(edgeChoices);
+}
+
 function isBetterInterleaving(candidate, best) {
   if (!best) return true;
   // Prefer the widest established weave. A shorter internal fragment can have
@@ -645,7 +653,8 @@ function findScoredInterleavedStructure(password, scoreSegment) {
     }
   }
 
-  let best = null;
+  let bestEstablished = null;
+  let bestPartial = null;
   for (const [edgePrefix, edgeSuffix] of edgePairs) {
     const outerEnd = password.length - edgeSuffix;
     for (let period = MIN_INTERLEAVED_PERIOD; period <= MAX_INTERLEAVED_PERIOD; period += 1) {
@@ -654,58 +663,95 @@ function findScoredInterleavedStructure(password, scoreSegment) {
 
       const outerSpan = password.slice(edgePrefix, outerEnd);
       const fullStreams = deinterleave(outerSpan, period);
-      const prefixes = [];
-      let eligible = true;
-      for (const stream of fullStreams) {
-        const prefix = recognizedPrefix(stream, scoreCached(stream));
-        if (!prefix) {
-          eligible = false;
-          break;
-        }
-        prefixes.push(prefix);
-      }
-      if (!eligible) continue;
+      const fullScores = fullStreams.map((stream) => scoreCached(stream));
+      const recognizedPrefixes = fullStreams.map((stream, index) => recognizedPrefix(stream, fullScores[index]));
+      const recognizedStreamIndexes = recognizedPrefixes
+        .map((prefix, index) => prefix ? index : -1)
+        .filter((index) => index >= 0);
 
-      const recovered = recoverRecognizedInterleavedCore(outerSpan, period, prefixes);
-      if (!recovered) continue;
-
-      const spanEnd = outerEnd - recovered.trim;
-      const span = password.slice(edgePrefix, spanEnd);
-      const streamLog10 = recovered.streams.map((stream) => segmentLog10(scoreCached, stream));
+      // This happens before the evidence decision. A random-looking residue
+      // has an ordinary zxcvbn cost within the model; its bruteforce category
+      // is never a veto on computing the period-k candidate.
+      const fullStreamLog10 = fullStreams.map((stream) => segmentLog10(scoreCached, stream));
       const reconstructionLog10 = interleaveReconstructionLog10(period);
-      const candidateLog10 = streamLog10.reduce((total, value) => total + value, 0) + reconstructionLog10;
-      const spanLog10 = segmentLog10(scoreCached, span);
 
-      // The reconstructed streams must materially improve on zxcvbn's
-      // ordinary contiguous parse of the identical local span.
+      // Preserve the established all-recognized route, including its bounded
+      // terminal-tail recovery. Existing fully explained interleavings keep
+      // exactly the prior reconstruction cost.
+      if (recognizedStreamIndexes.length === period) {
+        const recovered = recoverRecognizedInterleavedCore(outerSpan, period, recognizedPrefixes);
+        if (recovered) {
+          const spanEnd = outerEnd - recovered.trim;
+          const span = password.slice(edgePrefix, spanEnd);
+          const streamLog10 = recovered.streams.map((stream) => segmentLog10(scoreCached, stream));
+          const candidateLog10 = streamLog10.reduce((total, value) => total + value, 0) + reconstructionLog10;
+          const spanLog10 = segmentLog10(scoreCached, span);
+
+          if (candidateLog10 + MIN_INTERLEAVE_SAVINGS_LOG10 < spanLog10) {
+            const candidate = {
+              period,
+              streams: recovered.streams,
+              first: recovered.streams[0],
+              second: recovered.streams[1],
+              streamLog10,
+              reconstructionLog10,
+              evidenceLog10: 0,
+              recognizedStreamIndexes,
+              spanStart: edgePrefix,
+              spanEnd,
+              candidateLog10,
+              savings: spanLog10 - candidateLog10,
+              scorerAware: true
+            };
+            if (isBetterInterleaving(candidate, bestEstablished)) bestEstablished = candidate;
+          }
+        }
+        continue;
+      }
+
+      // A generic periodic score may retain one arbitrary residue stream.
+      // The other period-1 streams must independently establish the weave.
+      // For period 2, accepting only one structured half creates frequent
+      // false positives from ordinary alpha/digit alternation, so both halves
+      // remain required. This is an evidence threshold, not a restriction on
+      // the length, alphabet, or zxcvbn category of the remaining stream.
+      const requiredRecognized = period === 2 ? 2 : period - 1;
+      if (recognizedStreamIndexes.length < requiredRecognized) continue;
+
+      const evidenceLog10 = partialInterleaveEvidenceLog10(period, edgePrefix, edgeSuffix);
+      const candidateLog10 = fullStreamLog10.reduce((total, value) => total + value, 0) +
+        reconstructionLog10 + evidenceLog10;
+      const spanLog10 = segmentLog10(scoreCached, outerSpan);
       if (!(candidateLog10 + MIN_INTERLEAVE_SAVINGS_LOG10 < spanLog10)) continue;
 
       const candidate = {
         period,
-        streams: recovered.streams,
-        first: recovered.streams[0],
-        second: recovered.streams[1],
-        streamLog10,
+        streams: fullStreams,
+        first: fullStreams[0],
+        second: fullStreams[1],
+        streamLog10: fullStreamLog10,
         reconstructionLog10,
+        evidenceLog10,
+        recognizedStreamIndexes,
         spanStart: edgePrefix,
-        spanEnd,
+        spanEnd: outerEnd,
         candidateLog10,
         savings: spanLog10 - candidateLog10,
         scorerAware: true
       };
-      if (isBetterInterleaving(candidate, best)) best = candidate;
+      if (isBetterInterleaving(candidate, bestPartial)) bestPartial = candidate;
     }
 
-    // An exact whole-password candidate cannot be superseded by a bounded
-    // local span. Returning here avoids rescoring edge variants on the usual
-    // full-password weave path.
-    if (edgePrefix === 0 && edgeSuffix === 0 && best &&
-      best.spanStart === 0 && best.spanEnd === password.length) {
-      return best;
+    // An exact whole-password fully-recognized candidate cannot be superseded
+    // by a bounded local span. A partial model remains a fallback so it cannot
+    // displace an established existing parse with exposed literal edges.
+    if (edgePrefix === 0 && edgeSuffix === 0 && bestEstablished &&
+      bestEstablished.spanStart === 0 && bestEstablished.spanEnd === password.length) {
+      return bestEstablished;
     }
   }
 
-  return best;
+  return bestEstablished || bestPartial;
 }
 
 function findSimpleInterleavedStructure(password) {
@@ -886,14 +932,18 @@ function detectStructure(password, scoreSegment) {
       severity: 'medium',
       title: scorerAware ? `Period-${interleaved.period} interleaved predictable streams` : 'Interleaved simple streams',
       detail: scorerAware
-        ? `Period-${interleaved.period} residue streams ${interleaved.streams.map((stream) => `“${stream}”`).join(', ')} each have a lower-cost zxcvbn parse. Their scores are charged independently with an explicit reconstruction cost for choosing and ordering the weave.`
+        ? interleaved.recognizedStreamIndexes.length === interleaved.streams.length
+          ? `Period-${interleaved.period} residue streams ${interleaved.streams.map((stream) => `“${stream}”`).join(', ')} each have a lower-cost zxcvbn parse. Their scores are charged independently with an explicit reconstruction cost for choosing and ordering the weave.`
+          : `Period-${interleaved.period} residue streams ${interleaved.streams.map((stream) => `“${stream}”`).join(', ')} have recognizable structure in residue classes ${interleaved.recognizedStreamIndexes.map((index) => index + 1).join(', ')}. Every remaining stream is charged at its ordinary zxcvbn cost, with an extra cost for choosing the structured subset.`
         : 'Every-other-character streams are each constant or monotone. This catches constructions like 1a1b1c1d… that do not look like one ordinary sequence.',
       period: interleaved.period,
       streams: interleaved.streams,
+      recognizedStreamIndexes: interleaved.recognizedStreamIndexes,
       first: interleaved.first,
       second: interleaved.second,
       scorerAware,
       reconstructionLog10: interleaved.reconstructionLog10,
+      evidenceLog10: interleaved.evidenceLog10,
       spanStart: interleaved.spanStart,
       spanEnd: interleaved.spanEnd,
       capLog10: scorerAware ? null : 5.2
@@ -950,11 +1000,13 @@ function buildLocalOption(detection, scoreSegment) {
   if (detection.id === 'interleaved-structured-streams' && detection.scorerAware) {
     const streamBaselineLog10 = detection.streams.map((stream) => segmentLog10(scoreSegment, stream));
     const reconstructionLog10 = interleaveReconstructionLog10(detection.period);
-    cost = streamBaselineLog10.reduce((total, value) => total + value, 0) + reconstructionLog10;
+    const evidenceLog10 = Number.isFinite(detection.evidenceLog10) ? detection.evidenceLog10 : 0;
+    cost = streamBaselineLog10.reduce((total, value) => total + value, 0) + reconstructionLog10 + evidenceLog10;
     detection.streamBaselineLog10 = streamBaselineLog10;
     detection.firstStreamBaselineLog10 = streamBaselineLog10[0];
     detection.secondStreamBaselineLog10 = streamBaselineLog10[1];
     detection.reconstructionLog10 = reconstructionLog10;
+    detection.evidenceLog10 = evidenceLog10;
     detection.structuralCandidateLog10 = cost;
   }
 

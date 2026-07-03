@@ -184,10 +184,14 @@ function createBaseResult(password, options = {}) {
       structuralCandidateLog10: detection.structuralCandidateLog10 === undefined ? null : round(detection.structuralCandidateLog10),
       interleavePeriod: Number.isInteger(detection.period) ? detection.period : null,
       interleaveStreams: Array.isArray(detection.streams) ? detection.streams : null,
+      interleaveRecognizedStreamIndexes: Array.isArray(detection.recognizedStreamIndexes)
+        ? detection.recognizedStreamIndexes
+        : null,
       interleaveStreamBaselineLog10: Array.isArray(detection.streamBaselineLog10)
         ? detection.streamBaselineLog10.map((value) => round(value))
         : null,
       interleaveReconstructionLog10: detection.reconstructionLog10 === undefined ? null : round(detection.reconstructionLog10),
+      interleaveEvidenceLog10: detection.evidenceLog10 === undefined ? null : round(detection.evidenceLog10),
       selectedInComposite: Boolean(detection.selectedInComposite),
       spanStart: Number.isInteger(detection.spanStart) ? detection.spanStart : null,
       spanEnd: Number.isInteger(detection.spanEnd) ? detection.spanEnd : null
