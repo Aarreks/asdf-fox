@@ -25,10 +25,18 @@ function arithmeticRunModelLog10({ width, step, terms }) {
   // unrealistically cheap bucket.
   const stepChoices = Math.max(6, 4 + 2 * Math.abs(step));
   const stepCost = log10(stepChoices);
-  const termCount = log10(Math.max(4, terms));
+  // Keep the established three-term cost, then charge every additional
+  // confirmed term. This prevents a completed counter from becoming cheaper
+  // when its fourth term is appended.
+  const termCount = log10(terms + 1);
   const construction = 0.7;
   return start + stepCost + termCount + construction;
 }
+
+// A repeated token can occur before the first number, after the last number,
+// both, or neither. The structural model must choose one of those four edge
+// layouts in addition to the token and arithmetic counter itself.
+const COUNTER_EDGE_LAYOUT_LOG10 = log10(4);
 
 function isDigitArithmeticSequence(text) {
   if (!/^\d{6,}$/u.test(text)) return null;
@@ -127,20 +135,50 @@ function readDigits(password, start) {
   };
 }
 
+function counterNumber(number) {
+  return number && number.text.length <= 6 && Number.isSafeInteger(number.value) ? number : null;
+}
+
+function tokenEndsAtBoundary(password, end) {
+  return end === password.length || !/[A-Za-z0-9]/u.test(password[end]);
+}
+
+function betterCounterCandidate(candidate, best) {
+  if (!best) return true;
+  const candidateLength = candidate.spanEnd - candidate.spanStart;
+  const bestLength = best.spanEnd - best.spanStart;
+  if (candidateLength !== bestLength) return candidateLength > bestLength;
+  if (candidate.terms !== best.terms) return candidate.terms > best.terms;
+  // A candidate with explicit repeated-token material at both edges carries
+  // more direct evidence than an otherwise tied partial boundary layout.
+  if (candidate.edgeTokens !== best.edgeTokens) return candidate.edgeTokens > best.edgeTokens;
+  return candidate.spanStart < best.spanStart;
+}
+
 function findNumberedRepeatedToken(password) {
-  // Detect a local template of the form:
-  //   token + n, token + (n + step), token + (n + 2 * step), ...
-  // The repeated alphabetic token and the arithmetic counter must both be
-  // explicit. This is deliberately not a general word parser.
+  // Detect an arithmetic counter separated by one repeated alphabetic token.
+  // All four boundary layouts are accepted:
+  //   token n token n token n
+  //   token n token n token n token
+  //   n token n token n
+  //   n token n token n token
   //
-  // One- and two-character tags are common in hand-made counters:
-  //   c16c17c18c19c20
-  // They need four terms instead of the normal three, which keeps a short
-  // accidental tag plus two numbers from becoming a structural explanation.
+  // The old detector only recognized the first form. That created a score
+  // cliff for a completed number-first construction such as
+  //   68gay69gay70gay
+  // because appending "71" happened to expose the shorter suffix
+  //   gay69gay70gay71. Parsing every edge layout makes the full construction
+  // scoreable before and after that extension.
   const n = password.length;
   if (n < 8) return null;
 
   let best = null;
+  const consider = (candidate) => {
+    if (betterCounterCandidate(candidate, best)) best = candidate;
+  };
+
+  // Token-first layouts retain the established behavior, plus an optional
+  // terminal copy of the same token when it reaches a clear boundary.
   for (let spanStart = 0; spanStart < n; spanStart += 1) {
     if (!/[A-Za-z]/u.test(password[spanStart])) continue;
 
@@ -150,20 +188,84 @@ function findNumberedRepeatedToken(password) {
     if (token.length < 1 || token.length > 32) continue;
 
     const requiredTerms = token.length <= 2 ? 4 : 3;
-    const first = readDigits(password, tokenEnd);
-    if (!first || first.text.length > 6 || !Number.isSafeInteger(first.value)) continue;
+    const first = counterNumber(readDigits(password, tokenEnd));
+    if (!first) continue;
 
     const normalized = token.toLocaleLowerCase('en-US');
     const values = [first.value];
     let cursor = first.end;
     let step = null;
 
-    // Preserve the longest arithmetic prefix. A matching token that resumes
-    // with an unrelated final number is literal suffix material, not evidence
-    // that the already-established local run was independent randomness.
     while (cursor < n && password.slice(cursor, cursor + token.length).toLocaleLowerCase('en-US') === normalized) {
-      const next = readDigits(password, cursor + token.length);
-      if (!next || next.text.length > 6 || !Number.isSafeInteger(next.value)) break;
+      const afterToken = cursor + token.length;
+      const next = counterNumber(readDigits(password, afterToken));
+
+      // The fixed token may close a complete counter rather than introduce
+      // another number. Do not consume a prefix of a longer alphabetic suffix.
+      if (!next) {
+        if (values.length >= requiredTerms && tokenEndsAtBoundary(password, afterToken)) {
+          consider({
+            token,
+            start: values[0],
+            step,
+            terms: values.length,
+            width: first.text.length,
+            edgeTokens: 2,
+            spanStart,
+            spanEnd: afterToken
+          });
+        }
+        break;
+      }
+
+      const nextStep = next.value - values[values.length - 1];
+      if (step === null) {
+        step = nextStep;
+        if (step === 0) break;
+      } else if (nextStep !== step) {
+        break;
+      }
+
+      values.push(next.value);
+      cursor = next.end;
+      if (values.length < requiredTerms) continue;
+
+      consider({
+        token,
+        start: values[0],
+        step,
+        terms: values.length,
+        width: first.text.length,
+        edgeTokens: 1,
+        spanStart,
+        spanEnd: cursor
+      });
+    }
+  }
+
+  // Number-first layouts use the same token and arithmetic evidence. They are
+  // separate from the token-first scan because the first numeric field has no
+  // preceding token to seed the old parser.
+  for (let spanStart = 0; spanStart < n; spanStart += 1) {
+    if (!/\d/u.test(password[spanStart]) || (spanStart > 0 && /\d/u.test(password[spanStart - 1]))) continue;
+
+    const first = counterNumber(readDigits(password, spanStart));
+    if (!first) continue;
+
+    let tokenEnd = first.end;
+    while (tokenEnd < n && /[A-Za-z]/u.test(password[tokenEnd])) tokenEnd += 1;
+    const token = password.slice(first.end, tokenEnd);
+    if (token.length < 1 || token.length > 32) continue;
+
+    const requiredTerms = token.length <= 2 ? 4 : 3;
+    const normalized = token.toLocaleLowerCase('en-US');
+    const values = [first.value];
+    let cursor = tokenEnd;
+    let step = null;
+
+    while (cursor < n) {
+      const next = counterNumber(readDigits(password, cursor));
+      if (!next) break;
 
       const nextStep = next.value - values[values.length - 1];
       if (step === null) {
@@ -176,31 +278,55 @@ function findNumberedRepeatedToken(password) {
       values.push(next.value);
       cursor = next.end;
 
-      if (values.length < requiredTerms) continue;
-      const candidate = {
-        token,
-        start: values[0],
-        step,
-        terms: values.length,
-        width: first.text.length,
-        spanStart,
-        spanEnd: cursor
-      };
-
-      // Prefer the widest explicit template. For equal spans, prefer more
-      // repeated terms so a later suffix cannot displace a fuller explanation.
-      const candidateLength = candidate.spanEnd - candidate.spanStart;
-      const bestLength = best ? best.spanEnd - best.spanStart : -1;
-      if (!best || candidateLength > bestLength ||
-        (candidateLength === bestLength && candidate.terms > best.terms)) {
-        best = candidate;
+      const hasToken = password.slice(cursor, cursor + token.length).toLocaleLowerCase('en-US') === normalized;
+      if (!hasToken) {
+        // A number-first candidate is deliberately complete: it may end at a
+        // true outer boundary, but it may not silently stop before a different
+        // adjacent letter/digit block. That avoids relabelling an irregular
+        // repeated-token template as an arithmetic prefix merely because its
+        // first three numeric fields happen to line up.
+        if (values.length >= requiredTerms && tokenEndsAtBoundary(password, cursor)) {
+          consider({
+            token,
+            start: values[0],
+            step,
+            terms: values.length,
+            width: first.text.length,
+            edgeTokens: 0,
+            spanStart,
+            spanEnd: cursor
+          });
+        }
+        break;
       }
+
+      const afterToken = cursor + token.length;
+      const following = counterNumber(readDigits(password, afterToken));
+      if (!following) {
+        if (values.length >= requiredTerms && tokenEndsAtBoundary(password, afterToken)) {
+          consider({
+            token,
+            start: values[0],
+            step,
+            terms: values.length,
+            width: first.text.length,
+            edgeTokens: 1,
+            spanStart,
+            spanEnd: afterToken
+          });
+        }
+        break;
+      }
+
+      // Do not select a partial number-first prefix while an adjacent matching
+      // token-number block remains. The next loop iteration either extends the
+      // same arithmetic counter or rejects the whole number-first candidate.
+      cursor = afterToken;
     }
   }
 
   return best;
 }
-
 function findRepeatedTokenNumericTemplate(password) {
   // Detect a local template of the form:
   //   token + n1, token + n2, token + n3, ...
@@ -662,7 +788,7 @@ function detectStructure(password, scoreSegment) {
       id: 'numbered-repeated-token-sequence',
       severity: 'high',
       title: 'Repeated token with arithmetic counter',
-      detail: `The token “${numberedRepeat.token}” repeats ${numberedRepeat.terms} times with numbers beginning at ${numberedRepeat.start} and step ${numberedRepeat.step}. The token and counter are chosen once, rather than independently for every copy.`,
+      detail: `The token “${numberedRepeat.token}” structures ${numberedRepeat.terms} arithmetic values beginning at ${numberedRepeat.start} with step ${numberedRepeat.step}. The token, counter, and one of four boundary layouts are chosen once, rather than independently for every copy.`,
       root: numberedRepeat.token,
       start: numberedRepeat.start,
       step: numberedRepeat.step,
@@ -791,13 +917,15 @@ function buildLocalOption(detection, scoreSegment) {
     // Choosing the root once plus the compact arithmetic-counter model is
     // cheaper than choosing each token-number block independently. The
     // numeric model includes start, step, term-count, and construction cost.
-    cost = rootLog10 + arithmeticRunModelLog10({
+    const counterModelLog10 = arithmeticRunModelLog10({
       width: detection.width,
       step: detection.step,
       terms: detection.terms
     });
+    cost = rootLog10 + counterModelLog10 + COUNTER_EDGE_LAYOUT_LOG10;
     detection.rootBaselineLog10 = rootLog10;
-    detection.sequenceModelLog10 = cost - rootLog10;
+    detection.sequenceModelLog10 = counterModelLog10;
+    detection.counterEdgeLayoutLog10 = COUNTER_EDGE_LAYOUT_LOG10;
     detection.structuralCandidateLog10 = cost;
   }
 

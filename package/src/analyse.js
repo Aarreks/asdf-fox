@@ -180,6 +180,7 @@ function createBaseResult(password, options = {}) {
       prefixBaselineLog10: detection.prefixBaselineLog10 === undefined ? null : round(detection.prefixBaselineLog10),
       suffixBaselineLog10: detection.suffixBaselineLog10 === undefined ? null : round(detection.suffixBaselineLog10),
       sequenceModelLog10: detection.sequenceModelLog10 === undefined ? null : round(detection.sequenceModelLog10),
+      counterEdgeLayoutLog10: detection.counterEdgeLayoutLog10 === undefined ? null : round(detection.counterEdgeLayoutLog10),
       structuralCandidateLog10: detection.structuralCandidateLog10 === undefined ? null : round(detection.structuralCandidateLog10),
       interleavePeriod: Number.isInteger(detection.period) ? detection.period : null,
       interleaveStreams: Array.isArray(detection.streams) ? detection.streams : null,
