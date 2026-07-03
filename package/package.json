@@ -36,5 +36,9 @@
     "@zxcvbn-ts/language-common": "^4.1.2",
     "@zxcvbn-ts/language-en": "^4.1.1",
     "esbuild": "^0.27.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aarreks/asdf-fox.git"
   }
 }
