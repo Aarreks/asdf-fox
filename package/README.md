@@ -120,7 +120,7 @@ const acceptable =
   result.closeVariantWarnings.length === 0;
 ```
 
-`result.score.band` and the exported `band()` helper remain legacy aliases in the 0.1.x series. New integrations should use `result.score.grade` and `grade()`.
+`result.score.band` and the exported `band()` helper remain legacy aliases. New integrations should use `result.score.grade` and `grade()`.
 
 ## Security boundary
 
