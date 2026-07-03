@@ -19,7 +19,11 @@ function arithmeticRunModelLog10({ width, step, terms }) {
   // raw numeric run. Surrounding material is charged separately by the
   // structural parser, so a detected suffix cannot erase prefix cost.
   const start = log10(numericStartChoices(width));
-  const stepChoices = Math.max(6, Math.min(28, 4 + 2 * Math.abs(step)));
+  // The counter parser permits any safe integer step represented by its
+  // numeric fields. Keep the previous 1..12 model exactly, then continue the
+  // same start/step enumeration instead of flattening large steps to one
+  // unrealistically cheap bucket.
+  const stepChoices = Math.max(6, 4 + 2 * Math.abs(step));
   const stepCost = log10(stepChoices);
   const termCount = log10(Math.max(4, terms));
   const construction = 0.7;
@@ -128,8 +132,13 @@ function findNumberedRepeatedToken(password) {
   //   token + n, token + (n + step), token + (n + 2 * step), ...
   // The repeated alphabetic token and the arithmetic counter must both be
   // explicit. This is deliberately not a general word parser.
+  //
+  // One- and two-character tags are common in hand-made counters:
+  //   c16c17c18c19c20
+  // They need four terms instead of the normal three, which keeps a short
+  // accidental tag plus two numbers from becoming a structural explanation.
   const n = password.length;
-  if (n < 12) return null;
+  if (n < 8) return null;
 
   let best = null;
   for (let spanStart = 0; spanStart < n; spanStart += 1) {
@@ -138,8 +147,9 @@ function findNumberedRepeatedToken(password) {
     let tokenEnd = spanStart;
     while (tokenEnd < n && /[A-Za-z]/u.test(password[tokenEnd])) tokenEnd += 1;
     const token = password.slice(spanStart, tokenEnd);
-    if (token.length < 3 || token.length > 32) continue;
+    if (token.length < 1 || token.length > 32) continue;
 
+    const requiredTerms = token.length <= 2 ? 4 : 3;
     const first = readDigits(password, tokenEnd);
     if (!first || first.text.length > 6 || !Number.isSafeInteger(first.value)) continue;
 
@@ -150,10 +160,7 @@ function findNumberedRepeatedToken(password) {
 
     // Preserve the longest arithmetic prefix. A matching token that resumes
     // with an unrelated final number is literal suffix material, not evidence
-    // that the already-established local run was independent randomness:
-    //   1and2and3and4and1 -> [and2, and3, and4] + literal "and1".
-    // This still requires three terms before any structural candidate exists,
-    // so gay1gay2gay4 remains rejected.
+    // that the already-established local run was independent randomness.
     while (cursor < n && password.slice(cursor, cursor + token.length).toLocaleLowerCase('en-US') === normalized) {
       const next = readDigits(password, cursor + token.length);
       if (!next || next.text.length > 6 || !Number.isSafeInteger(next.value)) break;
@@ -161,7 +168,7 @@ function findNumberedRepeatedToken(password) {
       const nextStep = next.value - values[values.length - 1];
       if (step === null) {
         step = nextStep;
-        if (step === 0 || Math.abs(step) > 12) break;
+        if (step === 0) break;
       } else if (nextStep !== step) {
         break;
       }
@@ -169,7 +176,7 @@ function findNumberedRepeatedToken(password) {
       values.push(next.value);
       cursor = next.end;
 
-      if (values.length < 3) continue;
+      if (values.length < requiredTerms) continue;
       const candidate = {
         token,
         start: values[0],
@@ -386,10 +393,29 @@ function findEmbeddedRepeatedChunk(password) {
   return null;
 }
 
-const MIN_INTERLEAVED_SPAN_LENGTH = 10;
 const MIN_INTERLEAVED_STREAM_LENGTH = 4;
+const MIN_INTERLEAVED_PERIOD = 2;
+const MAX_INTERLEAVED_PERIOD = 5;
 const MAX_INTERLEAVED_STREAM_TAIL = 2;
-const INTERLEAVE_LAYOUT_LOG10 = 1.2;
+const MAX_INTERLEAVED_EDGE_LITERAL = 1;
+const INTERLEAVED_PERIOD_CHOICES = MAX_INTERLEAVED_PERIOD - MIN_INTERLEAVED_PERIOD + 1;
+const INTERLEAVE_RECONSTRUCTION_BASE_LOG10 = 0.75;
+const MIN_INTERLEAVE_SAVINGS_LOG10 = 0.4;
+
+function factorial(value) {
+  let total = 1;
+  for (let number = 2; number <= value; number += 1) total *= number;
+  return total;
+}
+
+function interleaveReconstructionLog10(period) {
+  // The recovered streams alone do not specify the original password. Charge
+  // for choosing this detector family, a supported period, and an ordering of
+  // the period residue classes before round-robin reconstruction.
+  return INTERLEAVE_RECONSTRUCTION_BASE_LOG10 +
+    log10(INTERLEAVED_PERIOD_CHOICES) +
+    log10(factorial(period));
+}
 
 function monotoneAlpha(stream) {
   if (stream.length < 4 || !/^[A-Za-z]+$/u.test(stream)) return false;
@@ -412,24 +438,22 @@ function isSimpleStream(stream) {
   return constant || monotoneAlpha(stream) || monotoneDigits(stream);
 }
 
-function deinterleave(span) {
-  let first = '';
-  let second = '';
+function deinterleave(span, period = 2) {
+  const streams = Array.from({ length: period }, () => '');
   for (let index = 0; index < span.length; index += 1) {
-    if (index % 2 === 0) first += span[index];
-    else second += span[index];
+    streams[index % period] += span[index];
   }
-  return { first, second };
+  return streams;
 }
 
 function recognizedPrefix(stream, score) {
   const sequence = Array.isArray(score?.sequence) ? score.sequence : [];
   if (!sequence.length) return null;
 
-  // The general detector uses zxcvbn's selected parse. A recovered stream is
-  // eligible only when it is entirely non-generic apart from a very short
-  // terminal literal tail. This prevents two unrelated alternating strings
-  // from being relabelled as an interleaving merely because they split in two.
+  // A recovered stream is eligible only when zxcvbn's selected parse covers
+  // all but a very short terminal literal tail. This accepts dictionary,
+  // sequence, repeat, spatial, and other zxcvbn-recognized structures without
+  // relabelling arbitrary residue classes as a weave.
   let cursor = 0;
   for (let index = 0; index < sequence.length; index += 1) {
     const piece = sequence[index];
@@ -449,81 +473,145 @@ function recognizedPrefix(stream, score) {
   return { core, tailLength };
 }
 
-function findScoredInterleavedPrefix(password, scoreSegment) {
-  if (typeof scoreSegment !== 'function' || password.length < MIN_INTERLEAVED_SPAN_LENGTH) return null;
+function recoverRecognizedInterleavedCore(span, period, prefixes) {
+  const maxTrim = prefixes.reduce((total, prefix) => total + prefix.tailLength, 0);
+  for (let trim = 0; trim <= maxTrim; trim += 1) {
+    const coreSpan = span.slice(0, span.length - trim);
+    if (coreSpan.length < period * MIN_INTERLEAVED_STREAM_LENGTH) break;
+    const streams = deinterleave(coreSpan, period);
+    if (streams.some((stream) => stream.length < MIN_INTERLEAVED_STREAM_LENGTH)) continue;
+    if (streams.every((stream, index) => stream === prefixes[index].core)) {
+      return { trim, streams };
+    }
+  }
+  return null;
+}
+
+function isBetterInterleaving(candidate, best) {
+  if (!best) return true;
+  // Prefer the widest established weave. A shorter internal fragment can have
+  // a larger percentage saving merely because it omits otherwise predictable
+  // stream characters, but it should not hide the full construction.
+  const candidateLength = candidate.spanEnd - candidate.spanStart;
+  const bestLength = best.spanEnd - best.spanStart;
+  if (candidateLength !== bestLength) return candidateLength > bestLength;
+
+  if (candidate.savings > best.savings + 1e-9) return true;
+  if (Math.abs(candidate.savings - best.savings) > 1e-9) return false;
+  return candidate.period < best.period;
+}
+
+function findScoredInterleavedStructure(password, scoreSegment) {
+  if (typeof scoreSegment !== 'function' || password.length < MIN_INTERLEAVED_PERIOD * MIN_INTERLEAVED_STREAM_LENGTH) return null;
 
   const scoreCache = new Map();
-  const scoreCached = (text) => {
-    if (!scoreCache.has(text)) scoreCache.set(text, scoreSegment(text));
-    return scoreCache.get(text);
+  const scoreCached = (value) => {
+    if (!scoreCache.has(value)) scoreCache.set(value, scoreSegment(value));
+    return scoreCache.get(value);
   };
 
-  // Score only the full two recovered streams, then (at most) their recovered
-  // cores. This keeps this general detector bounded rather than rescoring every
-  // possible substring pair. A bounded residue at the end remains literal.
-  const full = deinterleave(password);
-  const firstPrefix = recognizedPrefix(full.first, scoreCached(full.first));
-  const secondPrefix = recognizedPrefix(full.second, scoreCached(full.second));
-  if (!firstPrefix || !secondPrefix) return null;
-
-  let trim = 0;
-  const maxTrim = firstPrefix.tailLength + secondPrefix.tailLength;
-  for (let candidate = 1; candidate <= maxTrim; candidate += 1) {
-    const coreSpan = password.slice(0, password.length - candidate);
-    if (coreSpan.length < MIN_INTERLEAVED_SPAN_LENGTH) break;
-    const core = deinterleave(coreSpan);
-    if (core.first === firstPrefix.core && core.second === secondPrefix.core) trim = candidate;
+  const edgePairs = [];
+  for (let totalResidue = 0; totalResidue <= 2 * MAX_INTERLEAVED_EDGE_LITERAL; totalResidue += 1) {
+    for (let edgePrefix = 0; edgePrefix <= MAX_INTERLEAVED_EDGE_LITERAL; edgePrefix += 1) {
+      const edgeSuffix = totalResidue - edgePrefix;
+      if (edgeSuffix < 0 || edgeSuffix > MAX_INTERLEAVED_EDGE_LITERAL) continue;
+      edgePairs.push([edgePrefix, edgeSuffix]);
+    }
   }
 
-  const spanEnd = password.length - trim;
-  const span = password.slice(0, spanEnd);
-  const { first, second } = deinterleave(span);
-  if (first.length < MIN_INTERLEAVED_STREAM_LENGTH || second.length < MIN_INTERLEAVED_STREAM_LENGTH) return null;
+  let best = null;
+  for (const [edgePrefix, edgeSuffix] of edgePairs) {
+    const outerEnd = password.length - edgeSuffix;
+    for (let period = MIN_INTERLEAVED_PERIOD; period <= MAX_INTERLEAVED_PERIOD; period += 1) {
+      const minSpanLength = period * MIN_INTERLEAVED_STREAM_LENGTH;
+      if (outerEnd - edgePrefix < minSpanLength) continue;
 
-  const firstLog10 = segmentLog10(scoreCached, first);
-  const secondLog10 = segmentLog10(scoreCached, second);
-  const streamModelLog10 = firstLog10 + secondLog10 + INTERLEAVE_LAYOUT_LOG10;
-  const spanLog10 = segmentLog10(scoreCached, span);
+      const outerSpan = password.slice(edgePrefix, outerEnd);
+      const fullStreams = deinterleave(outerSpan, period);
+      const prefixes = [];
+      let eligible = true;
+      for (const stream of fullStreams) {
+        const prefix = recognizedPrefix(stream, scoreCached(stream));
+        if (!prefix) {
+          eligible = false;
+          break;
+        }
+        prefixes.push(prefix);
+      }
+      if (!eligible) continue;
 
-  // The construction must beat zxcvbn's ordinary score for the same contiguous
-  // span by a material amount. The fixed 1.2-log layout cost covers choosing an
-  // alternating layout instead of treating the two streams as one free parse.
-  if (!(streamModelLog10 + 0.75 < spanLog10)) return null;
+      const recovered = recoverRecognizedInterleavedCore(outerSpan, period, prefixes);
+      if (!recovered) continue;
 
-  return {
-    first,
-    second,
-    firstLog10,
-    secondLog10,
-    spanStart: 0,
-    spanEnd,
-    candidateLog10: streamModelLog10,
-    scorerAware: true
-  };
+      const spanEnd = outerEnd - recovered.trim;
+      const span = password.slice(edgePrefix, spanEnd);
+      const streamLog10 = recovered.streams.map((stream) => segmentLog10(scoreCached, stream));
+      const reconstructionLog10 = interleaveReconstructionLog10(period);
+      const candidateLog10 = streamLog10.reduce((total, value) => total + value, 0) + reconstructionLog10;
+      const spanLog10 = segmentLog10(scoreCached, span);
+
+      // The reconstructed streams must materially improve on zxcvbn's
+      // ordinary contiguous parse of the identical local span.
+      if (!(candidateLog10 + MIN_INTERLEAVE_SAVINGS_LOG10 < spanLog10)) continue;
+
+      const candidate = {
+        period,
+        streams: recovered.streams,
+        first: recovered.streams[0],
+        second: recovered.streams[1],
+        streamLog10,
+        reconstructionLog10,
+        spanStart: edgePrefix,
+        spanEnd,
+        candidateLog10,
+        savings: spanLog10 - candidateLog10,
+        scorerAware: true
+      };
+      if (isBetterInterleaving(candidate, best)) best = candidate;
+    }
+
+    // An exact whole-password candidate cannot be superseded by a bounded
+    // local span. Returning here avoids rescoring edge variants on the usual
+    // full-password weave path.
+    if (edgePrefix === 0 && edgeSuffix === 0 && best &&
+      best.spanStart === 0 && best.spanEnd === password.length) {
+      return best;
+    }
+  }
+
+  return best;
 }
 
 function findSimpleInterleavedStructure(password) {
-  if (password.length < MIN_INTERLEAVED_SPAN_LENGTH) return null;
+  const period = 2;
+  const minSpanLength = period * MIN_INTERLEAVED_STREAM_LENGTH;
+  if (password.length < minSpanLength) return null;
 
-  // Retain the prior deterministic local rule. It preserves simple spans with
-  // unrelated material on either side, including callers of detectStructure()
-  // that intentionally do not supply a zxcvbn scorer.
+  // Keep the legacy deterministic local rule for callers that intentionally
+  // omit a zxcvbn scorer. Scorer-aware period 2..5 recovery is used by the
+  // normal analysis path.
   let best = null;
-  for (let spanStart = 0; spanStart <= password.length - MIN_INTERLEAVED_SPAN_LENGTH; spanStart += 1) {
-    for (let spanEnd = password.length; spanEnd >= spanStart + MIN_INTERLEAVED_SPAN_LENGTH; spanEnd -= 1) {
-      const span = password.slice(spanStart, spanEnd);
-      for (const offset of [0, 1]) {
-        const first = [...span].filter((_, index) => index % 2 === offset).join('');
-        const second = [...span].filter((_, index) => index % 2 !== offset).join('');
-        if (!isSimpleStream(first) || !isSimpleStream(second)) continue;
+  for (let spanStart = 0; spanStart <= password.length - minSpanLength; spanStart += 1) {
+    for (let spanEnd = password.length; spanEnd >= spanStart + minSpanLength; spanEnd -= 1) {
+      const streams = deinterleave(password.slice(spanStart, spanEnd), period);
+      if (!streams.every(isSimpleStream)) continue;
 
-        const candidate = { first, second, spanStart, spanEnd, candidateLog10: null, scorerAware: false };
-        const candidateLength = candidate.spanEnd - candidate.spanStart;
-        const bestLength = best ? best.spanEnd - best.spanStart : -1;
-        if (!best || candidateLength > bestLength ||
-          (candidateLength === bestLength && candidate.spanStart < best.spanStart)) {
-          best = candidate;
-        }
+      const candidate = {
+        period,
+        streams,
+        first: streams[0],
+        second: streams[1],
+        spanStart,
+        spanEnd,
+        candidateLog10: null,
+        reconstructionLog10: null,
+        scorerAware: false
+      };
+      const candidateLength = candidate.spanEnd - candidate.spanStart;
+      const bestLength = best ? best.spanEnd - best.spanStart : -1;
+      if (!best || candidateLength > bestLength ||
+        (candidateLength === bestLength && candidate.spanStart < best.spanStart)) {
+        best = candidate;
       }
     }
   }
@@ -531,7 +619,7 @@ function findSimpleInterleavedStructure(password) {
 }
 
 function findInterleavedStructure(password, scoreSegment) {
-  return findScoredInterleavedPrefix(password, scoreSegment) || findSimpleInterleavedStructure(password);
+  return findScoredInterleavedStructure(password, scoreSegment) || findSimpleInterleavedStructure(password);
 }
 
 function attachSource(detections, password) {
@@ -670,13 +758,16 @@ function detectStructure(password, scoreSegment) {
     detections.push({
       id: 'interleaved-structured-streams',
       severity: 'medium',
-      title: scorerAware ? 'Interleaved predictable streams' : 'Interleaved simple streams',
+      title: scorerAware ? `Period-${interleaved.period} interleaved predictable streams` : 'Interleaved simple streams',
       detail: scorerAware
-        ? `Every-other-character streams “${interleaved.first}” and “${interleaved.second}” each have a lower-cost zxcvbn parse. Their scores are charged independently with a fixed interleaving-layout cost.`
+        ? `Period-${interleaved.period} residue streams ${interleaved.streams.map((stream) => `“${stream}”`).join(', ')} each have a lower-cost zxcvbn parse. Their scores are charged independently with an explicit reconstruction cost for choosing and ordering the weave.`
         : 'Every-other-character streams are each constant or monotone. This catches constructions like 1a1b1c1d… that do not look like one ordinary sequence.',
+      period: interleaved.period,
+      streams: interleaved.streams,
       first: interleaved.first,
       second: interleaved.second,
       scorerAware,
+      reconstructionLog10: interleaved.reconstructionLog10,
       spanStart: interleaved.spanStart,
       spanEnd: interleaved.spanEnd,
       capLog10: scorerAware ? null : 5.2
@@ -729,12 +820,13 @@ function buildLocalOption(detection, scoreSegment) {
   }
 
   if (detection.id === 'interleaved-structured-streams' && detection.scorerAware) {
-    const firstLog10 = segmentLog10(scoreSegment, detection.first);
-    const secondLog10 = segmentLog10(scoreSegment, detection.second);
-    cost = firstLog10 + secondLog10 + INTERLEAVE_LAYOUT_LOG10;
-    detection.firstStreamBaselineLog10 = firstLog10;
-    detection.secondStreamBaselineLog10 = secondLog10;
-    detection.interleaveLayoutLog10 = INTERLEAVE_LAYOUT_LOG10;
+    const streamBaselineLog10 = detection.streams.map((stream) => segmentLog10(scoreSegment, stream));
+    const reconstructionLog10 = interleaveReconstructionLog10(detection.period);
+    cost = streamBaselineLog10.reduce((total, value) => total + value, 0) + reconstructionLog10;
+    detection.streamBaselineLog10 = streamBaselineLog10;
+    detection.firstStreamBaselineLog10 = streamBaselineLog10[0];
+    detection.secondStreamBaselineLog10 = streamBaselineLog10[1];
+    detection.reconstructionLog10 = reconstructionLog10;
     detection.structuralCandidateLog10 = cost;
   }
 
