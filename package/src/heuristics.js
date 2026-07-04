@@ -621,15 +621,32 @@ function partialInterleaveEvidenceLog10(period, edgePrefix, edgeSuffix) {
   return log10(period) + log10(edgeChoices);
 }
 
+function fullPasswordInterleaveCost(password, spanStart, spanEnd, candidateLog10, scoreCached) {
+  // A recovered weave can intentionally leave one or two literal edge
+  // characters outside its structured span. Those characters are retained by
+  // the final structural composition, so candidate selection must charge them
+  // now as well. Comparing span length first created an avoidable cliff:
+  // a weaker whole-password period-4 explanation could displace a much less
+  // expensive period-2 core plus one ordinary literal suffix.
+  return segmentLog10(scoreCached, password.slice(0, spanStart)) +
+    candidateLog10 +
+    segmentLog10(scoreCached, password.slice(spanEnd));
+}
+
 function isBetterInterleaving(candidate, best) {
   if (!best) return true;
-  // Prefer the widest established weave. A shorter internal fragment can have
-  // a larger percentage saving merely because it omits otherwise predictable
-  // stream characters, but it should not hide the full construction.
+
+  // Select the explanation that gives the lowest complete password parse, not
+  // simply the widest local span. This matches applyStructuralCaps(), which
+  // scores literal material outside the selected structural span separately.
+  if (candidate.fullPasswordLog10 < best.fullPasswordLog10 - 1e-9) return true;
+  if (Math.abs(candidate.fullPasswordLog10 - best.fullPasswordLog10) > 1e-9) return false;
+
+  // For equal whole-password costs, prefer the wider explanation, then the
+  // larger local saving, then the simpler period for stable presentation.
   const candidateLength = candidate.spanEnd - candidate.spanStart;
   const bestLength = best.spanEnd - best.spanStart;
   if (candidateLength !== bestLength) return candidateLength > bestLength;
-
   if (candidate.savings > best.savings + 1e-9) return true;
   if (Math.abs(candidate.savings - best.savings) > 1e-9) return false;
   return candidate.period < best.period;
@@ -700,6 +717,13 @@ function findScoredInterleavedStructure(password, scoreSegment) {
               spanStart: edgePrefix,
               spanEnd,
               candidateLog10,
+              fullPasswordLog10: fullPasswordInterleaveCost(
+                password,
+                edgePrefix,
+                spanEnd,
+                candidateLog10,
+                scoreCached
+              ),
               savings: spanLog10 - candidateLog10,
               scorerAware: true
             };
@@ -736,19 +760,22 @@ function findScoredInterleavedStructure(password, scoreSegment) {
         spanStart: edgePrefix,
         spanEnd: outerEnd,
         candidateLog10,
+        fullPasswordLog10: fullPasswordInterleaveCost(
+          password,
+          edgePrefix,
+          outerEnd,
+          candidateLog10,
+          scoreCached
+        ),
         savings: spanLog10 - candidateLog10,
         scorerAware: true
       };
       if (isBetterInterleaving(candidate, bestPartial)) bestPartial = candidate;
     }
 
-    // An exact whole-password fully-recognized candidate cannot be superseded
-    // by a bounded local span. A partial model remains a fallback so it cannot
-    // displace an established existing parse with exposed literal edges.
-    if (edgePrefix === 0 && edgeSuffix === 0 && bestEstablished &&
-      bestEstablished.spanStart === 0 && bestEstablished.spanEnd === password.length) {
-      return bestEstablished;
-    }
+    // Keep scanning after a whole-password candidate. A shorter recovered
+    // core may be cheaper once its explicitly charged literal edge material is
+    // included, and isBetterInterleaving() compares those complete parses.
   }
 
   return bestEstablished || bestPartial;

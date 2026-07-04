@@ -13,7 +13,16 @@ function now() {
 }
 
 function round(value) {
+  if (!Number.isFinite(value)) throw new TypeError('round() requires a finite number.');
   return Number(value.toFixed(2));
+}
+
+// Detector fields are evidence metadata, not required score inputs. Some
+// deliberately use null to express that a cost does not apply (for example,
+// the legacy simple period-2 detector has no reconstruction cost). Keep those
+// values serializable without letting optional evidence prevent analysis.
+function roundOptional(value) {
+  return Number.isFinite(value) ? round(value) : null;
 }
 
 function grade(log10Guesses, exactPwned = false) {
@@ -175,23 +184,23 @@ function createBaseResult(password, options = {}) {
       severity: detection.severity,
       title: detection.title,
       detail: detection.detail,
-      rootBaselineLog10: detection.rootBaselineLog10 === undefined ? null : round(detection.rootBaselineLog10),
-      bridgeBaselineLog10: detection.bridgeBaselineLog10 === undefined ? null : round(detection.bridgeBaselineLog10),
-      prefixBaselineLog10: detection.prefixBaselineLog10 === undefined ? null : round(detection.prefixBaselineLog10),
-      suffixBaselineLog10: detection.suffixBaselineLog10 === undefined ? null : round(detection.suffixBaselineLog10),
-      sequenceModelLog10: detection.sequenceModelLog10 === undefined ? null : round(detection.sequenceModelLog10),
-      counterEdgeLayoutLog10: detection.counterEdgeLayoutLog10 === undefined ? null : round(detection.counterEdgeLayoutLog10),
-      structuralCandidateLog10: detection.structuralCandidateLog10 === undefined ? null : round(detection.structuralCandidateLog10),
+      rootBaselineLog10: roundOptional(detection.rootBaselineLog10),
+      bridgeBaselineLog10: roundOptional(detection.bridgeBaselineLog10),
+      prefixBaselineLog10: roundOptional(detection.prefixBaselineLog10),
+      suffixBaselineLog10: roundOptional(detection.suffixBaselineLog10),
+      sequenceModelLog10: roundOptional(detection.sequenceModelLog10),
+      counterEdgeLayoutLog10: roundOptional(detection.counterEdgeLayoutLog10),
+      structuralCandidateLog10: roundOptional(detection.structuralCandidateLog10),
       interleavePeriod: Number.isInteger(detection.period) ? detection.period : null,
       interleaveStreams: Array.isArray(detection.streams) ? detection.streams : null,
       interleaveRecognizedStreamIndexes: Array.isArray(detection.recognizedStreamIndexes)
         ? detection.recognizedStreamIndexes
         : null,
       interleaveStreamBaselineLog10: Array.isArray(detection.streamBaselineLog10)
-        ? detection.streamBaselineLog10.map((value) => round(value))
+        ? detection.streamBaselineLog10.map((value) => roundOptional(value))
         : null,
-      interleaveReconstructionLog10: detection.reconstructionLog10 === undefined ? null : round(detection.reconstructionLog10),
-      interleaveEvidenceLog10: detection.evidenceLog10 === undefined ? null : round(detection.evidenceLog10),
+      interleaveReconstructionLog10: roundOptional(detection.reconstructionLog10),
+      interleaveEvidenceLog10: roundOptional(detection.evidenceLog10),
       selectedInComposite: Boolean(detection.selectedInComposite),
       spanStart: Number.isInteger(detection.spanStart) ? detection.spanStart : null,
       spanEnd: Number.isInteger(detection.spanEnd) ? detection.spanEnd : null
