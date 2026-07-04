@@ -89,31 +89,45 @@ test('recovers period 3, 4, and 5 interleavings from separately recognizable str
   }
 });
 
-test('recovers a bounded local period-3 weave and publishes its reconstruction cost', () => {
-  const password = `X${weave(['qwerty', 'aaaaaa', '123456'])}Y`;
-  const result = analyzePassword(password, { userInputs: [] });
-  const detection = result.structuralDetections.find(
-    (item) => item.id === 'interleaved-structured-streams'
-  );
+test('recovers a period-6 weave because every period through six is considered', () => {
+  const streams = ['qwerty', 'asdfgh', 'zxcvbn', '123456', '000000', 'aaaaaa'];
+  const password = weave(streams);
+  const detection = find(detectStructure(password, score), 'interleaved-structured-streams');
 
   assert.ok(detection);
-  assert.equal(detection.interleavePeriod, 3);
-  assert.deepEqual(detection.interleaveStreams, ['qwerty', 'aaaaaa', '123456']);
-  assert.ok(detection.interleaveReconstructionLog10 > 0);
-  assert.deepEqual([detection.spanStart, detection.spanEnd], [1, password.length - 1]);
-  assert.equal(detection.selectedInComposite, true);
+  assert.equal(detection.period, 6);
+  assert.deepEqual(detection.streams, streams);
+  assert.equal(detection.periodChoiceCount, 5);
+  assert.deepEqual([detection.spanStart, detection.spanEnd], [0, password.length]);
 });
 
-test('does not classify varied non-weaves as scorer-aware period interleavings', () => {
-  for (const password of [
-    'p5Q3R6T8',
-    'a7b8c7d9e7f0g',
-    'c16c17c19c20',
-    'wirelessBatteryRouter42',
-    'A9mQ4vT2rX7pL5sZ'
+test('constructs every full-password period candidate without recognizing a pattern first', () => {
+  const password = 'a1b2c3d4e5f6';
+  const scoreWithoutPatterns = (text) => ({ guessesLog10: text === password ? 20 : 1 });
+  const detection = find(detectStructure(password, scoreWithoutPatterns), 'interleaved-structured-streams');
+
+  assert.ok(detection);
+  assert.equal(detection.period, 2);
+  assert.deepEqual(detection.recognizedStreamIndexes, []);
+  assert.deepEqual(detection.streams, ['abcdef', '123456']);
+});
+
+test('scores residue streams for every permitted period before selecting the minimum', () => {
+  const password = 'abcdefghijkl';
+  const calls = new Set();
+  const scoreAll = (text) => {
+    calls.add(text);
+    return { guessesLog10: text === password ? 100 : 10 };
+  };
+
+  const detection = find(detectStructure(password, scoreAll), 'interleaved-structured-streams');
+  assert.ok(detection);
+
+  for (const stream of [
+    'acegik', 'bdfhjl',                 // period 2
+    'adgj', 'behk', 'cfil',             // period 3
+    'aei', 'bfj', 'cgk', 'dhl'          // period 4
   ]) {
-    const detections = detectStructure(password, score);
-    const detection = find(detections, 'interleaved-structured-streams');
-    assert.ok(!detection || detection.scorerAware === false, password);
+    assert.ok(calls.has(stream), `missing score call for ${stream}`);
   }
 });

@@ -200,6 +200,9 @@ function createBaseResult(password, options = {}) {
         ? detection.streamBaselineLog10.map((value) => roundOptional(value))
         : null,
       interleaveReconstructionLog10: roundOptional(detection.reconstructionLog10),
+      interleavePeriodChoiceCount: Number.isInteger(detection.periodChoiceCount)
+        ? detection.periodChoiceCount
+        : null,
       interleaveEvidenceLog10: roundOptional(detection.evidenceLog10),
       selectedInComposite: Boolean(detection.selectedInComposite),
       spanStart: Number.isInteger(detection.spanStart) ? detection.spanStart : null,

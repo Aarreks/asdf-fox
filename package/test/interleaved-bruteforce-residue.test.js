@@ -25,7 +25,7 @@ function interleaved(password) {
   );
 }
 
-test('charges a bruteforce residue instead of using it as a period-4 veto', () => {
+test('scores every residue, including a fully bruteforce stream, with no evidence surcharge', () => {
   const streams = ['gggg', 'aaaa', 'yyyy', '2$k9'];
   const password = weave(streams);
   const hit = interleaved(password);
@@ -35,39 +35,31 @@ test('charges a bruteforce residue instead of using it as a period-4 veto', () =
   assert.equal(hit.period, 4);
   assert.deepEqual(hit.streams, streams);
   assert.deepEqual(hit.recognizedStreamIndexes, [0, 1, 2]);
-  assert.ok(hit.evidenceLog10 > 0.5);
+  assert.equal(hit.evidenceLog10, 0);
 
   const baseline = score(password).guessesLog10;
   const adjusted = applyStructuralCaps(baseline, detectStructure(password, score), score);
   const expected = streams.reduce((total, stream) => total + score(stream).guessesLog10, 0) +
-    hit.reconstructionLog10 + hit.evidenceLog10;
+    hit.reconstructionLog10;
 
   assert.ok(Math.abs(adjusted.effectiveLog10 - expected) < 1e-9);
   assert.ok(adjusted.effectiveLog10 < baseline - 2);
 });
 
-test('allows one arbitrary bruteforce residue while the other period-4 streams establish the weave', () => {
-  const streams = ['gggggggg', 'aaaaaaaa', 'yyyyyyyy', '2$k9W!q%'];
-  const password = weave(streams);
-  const hit = interleaved(password);
+test('does not require zxcvbn parse metadata to construct a period candidate', () => {
+  const password = 'a1b2c3d4e5f6';
+  const scoreWithoutPatterns = (text) => ({ guessesLog10: text === password ? 20 : 1 });
+  const hit = detectStructure(password, scoreWithoutPatterns).find(
+    (detection) => detection.id === 'interleaved-structured-streams'
+  );
 
   assert.ok(hit);
-  assert.equal(hit.period, 4);
-  assert.deepEqual(hit.streams, streams);
-  assert.deepEqual(hit.recognizedStreamIndexes, [0, 1, 2]);
-  assert.ok(hit.evidenceLog10 > 0.5);
-
-  const baseline = score(password).guessesLog10;
-  const adjusted = applyStructuralCaps(baseline, detectStructure(password, score), score);
-  assert.ok(adjusted.effectiveLog10 < baseline - 2);
+  assert.equal(hit.period, 2);
+  assert.deepEqual(hit.recognizedStreamIndexes, []);
+  assert.deepEqual(hit.streams, ['abcdef', '123456']);
 });
 
-test('does not relabel a fully random partition as an interleaving construction', () => {
-  const password = weave(['2$k9', 'M@4!', 'v#7Q', 'rL8&']);
-  assert.equal(interleaved(password), undefined);
-});
-
-test('spatial keyboard paths are available to the baseline and interleaving parser', () => {
+test('spatial keyboard paths remain available to the baseline and metadata', () => {
   const path = score('zxcvb');
   assert.equal(path.sequence.length, 1);
   assert.equal(path.sequence[0].pattern, 'spatial');
