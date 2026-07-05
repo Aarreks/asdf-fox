@@ -5,6 +5,7 @@
 // independently. It is not a phrase or semantic model.
 const bigramData = require('../data/common-bigrams-top100k.json');
 const wordfreq = require('../data/wordfreq-en-2021.json');
+const { zxcvbn } = require('./zxcvbn');
 
 const DIRECTIONAL_ORDER_LOG10 = 0.15;
 const EXPLICIT_SEPARATOR_LOG10 = 0.15;
@@ -41,7 +42,8 @@ function metadata() {
     sourceUrl: bigramData.sourceUrl,
     selection: bigramData.selection,
     directionalOrderLog10: DIRECTIONAL_ORDER_LOG10,
-    explicitSeparatorLog10: EXPLICIT_SEPARATOR_LOG10
+    explicitSeparatorLog10: EXPLICIT_SEPARATOR_LOG10,
+    jointParsePolicy: 'A pair is not discounted when zxcvbn already recognizes its complete surface as one non-bruteforce match.'
   };
 }
 
@@ -164,11 +166,29 @@ function recoveredWordChains(password) {
   return chains.filter((chain) => chain.words.length >= 2);
 }
 
-function pairCandidate(chain, index, password) {
+// The bigram table is a replacement model for two independently chosen words.
+// It must not be stacked on a zxcvbn match that already compresses the exact
+// same character span into one recognized token (for example, `bigdick`).
+// In that case the baseline has already paid for a joint lexical choice; a
+// second pair discount would count the same correlation twice.
+function jointBaselineParse(password, start, end, scoreSegment) {
+  const local = scoreSegment(password.slice(start, end));
+  if (!Array.isArray(local.sequence)) return null;
+
+  return local.sequence.find((piece) =>
+    piece.pattern !== 'bruteforce' &&
+    piece.i === 0 &&
+    piece.j + 1 === end - start
+  ) || null;
+}
+
+function pairCandidate(chain, index, password, scorer) {
   const left = chain.words[index];
   const right = chain.words[index + 1];
   const count = bigramCounts.get(`${left.word}\u0000${right.word}`);
   if (!count) return null;
+
+  if (jointBaselineParse(password, left.start, right.end, scorer)) return null;
 
   // Words may be adjacent in the recovered token list while still having an
   // uncovered alphabetic character between them. Only exact adjacency or one
@@ -229,12 +249,16 @@ function selectNonOverlappingPairs(candidates) {
   return best.at(-1);
 }
 
-function scoreCommonBigramPatterns(password, currentLog10) {
+function scoreCommonBigramPatterns(password, currentLog10, scoreSegment) {
+  const scorer = typeof scoreSegment === 'function'
+    ? scoreSegment
+    : (text) => zxcvbn(text, []);
+
   const patterns = [];
   let totalReductionLog10 = 0;
 
   for (const chain of recoveredWordChains(password)) {
-    const candidates = Array.from({ length: chain.words.length - 1 }, (_, index) => pairCandidate(chain, index, password));
+    const candidates = Array.from({ length: chain.words.length - 1 }, (_, index) => pairCandidate(chain, index, password, scorer));
     const hits = candidates.filter(Boolean);
     if (hits.length === 0) continue;
 

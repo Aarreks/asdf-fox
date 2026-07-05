@@ -1,6 +1,6 @@
 {
   "name": "asdf-fox",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Inspectable password-strength analysis built on a bundled zxcvbn-ts baseline, a contemporary vocabulary overlay, targeted structural detectors, and opt-in Pwned Passwords checks.",
   "keywords": [
     "password",

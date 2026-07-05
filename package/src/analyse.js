@@ -110,7 +110,7 @@ function createBaseResult(password, options = {}) {
   timings.push({ label: 'limited variant construction', ms: round(now() - variantsStarted) });
 
   const collocationsStarted = now();
-  const commonBigrams = scoreCommonBigramPatterns(password, structural.effectiveLog10);
+  const commonBigrams = scoreCommonBigramPatterns(password, structural.effectiveLog10, baseScore);
   timings.push({ label: 'common bigram adjustment', ms: round(now() - collocationsStarted) });
 
   const currentLog10 = commonBigrams.effectiveLog10;
@@ -223,7 +223,7 @@ function createBaseResult(password, options = {}) {
       variantMeaning: 'A close-variant hit is a bounded attacker-cost warning, not proof that the entered password itself was exposed.',
       modernLexicon: 'The local vocabulary overlay is not a breach result. It proposes an alternative parse using ranked contemporary tokens plus ordinary zxcvbn scoring for every literal gap. Frequency-ranked entries come from a wordfreq English snapshot through about 2021; newer seed entries receive deliberately conservative fallback ranks.',
       localDictionaryRecovery: 'A bounded local recovery pass rechecks up to three generic spans selected by zxcvbn. It applies only when a local zxcvbn parse finds dictionary coverage over most of that span and materially lowers its estimate. It does not score phrases or infer semantic associations.',
-      commonBigrams: 'The optional common-bigram stage is a local, exact lookup over a filtered 100,000-entry count table. It can recover a known pair within an alphabetic run while retaining surrounding literal residue in the baseline estimate. It never bridges an uncovered internal character. Each pair is discounted by at most the easier word cost, retains an explicit directional order cost, and cannot reuse a middle word in adjacent matches. It is a bounded lexical adjustment, not phrase recognition or a semantic score.',
+      commonBigrams: 'The optional common-bigram stage is a local, exact lookup over a filtered 100,000-entry count table. It can recover a known pair within an alphabetic run while retaining surrounding literal residue in the baseline estimate. It never bridges an uncovered internal character. It only replaces two independently modeled words: when zxcvbn already recognizes the exact pair surface as one non-bruteforce token, no second bigram discount is applied. Each remaining pair is discounted by at most the easier word cost, retains an explicit directional order cost, and cannot reuse a middle word in adjacent matches. It is a bounded lexical adjustment, not phrase recognition or a semantic score.',
       privacy: 'Only the first five characters of each candidate SHA-1 hash are sent to HIBP. The app never sends the plaintext password to HIBP and does not log or persist it.'
     }
   };

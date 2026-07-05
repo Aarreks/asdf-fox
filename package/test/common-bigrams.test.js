@@ -9,27 +9,27 @@ test('ships the requested 100,000-entry cleaned bigram table', () => {
   const details = metadata();
   assert.equal(details.entryCount, 100_000);
   assert.match(details.selection, /Top 100000 lowercase ASCII alphabetic/i);
+  assert.match(details.jointParsePolicy, /one non-bruteforce match/i);
 });
 
-test('recovers a merged exact pair and keeps the pair above the harder-word floor', () => {
-  const scored = scoreCommonBigramPatterns('newyork', 10);
+test('does not stack a bigram adjustment on a zxcvbn joint parse', () => {
+  const joined = scoreCommonBigramPatterns('newyork', 10);
+  const separated = scoreCommonBigramPatterns('new_york', 10);
 
-  assert.equal(scored.changed, true);
-  assert.equal(scored.composition.patterns.length, 1);
-  const pair = scored.composition.patterns[0].selectedPairs[0];
+  assert.equal(joined.changed, false);
+  assert.equal(joined.composition, null);
+  assert.equal(separated.changed, true);
+  const pair = separated.composition.patterns[0].selectedPairs[0];
   assert.equal(`${pair.left} ${pair.right}`, 'new york');
   assert.ok(pair.reductionLog10 > 0);
   assert.ok(pair.pairFloorLog10 >= Math.max(Math.log10(pair.leftRank), Math.log10(pair.rightRank)));
-  assert.ok(scored.effectiveLog10 < 10);
 });
 
 test('charges an explicit one-character separator and refuses two separators as one boundary', () => {
-  const merged = scoreCommonBigramPatterns('newyork', 10);
   const separated = scoreCommonBigramPatterns('new_york', 10);
   const doubleSeparated = scoreCommonBigramPatterns('new__york', 10);
 
   assert.equal(separated.changed, true);
-  assert.ok(separated.composition.totalReductionLog10 < merged.composition.totalReductionLog10);
   assert.equal(doubleSeparated.changed, false);
 });
 
@@ -58,9 +58,27 @@ test('publishes inspectable common-bigram evidence through the public local API'
   assert.ok(result.score.effectiveLog10 < result.score.baselineLog10);
 });
 
+test('keeps the explicit-separator adjustment but avoids a second penalty for a known compound', () => {
+  const separated = analyzePassword('big-dick-69420', { userInputs: [] });
+  const joined = analyzePassword('bigdick-69420', { userInputs: [] });
+
+  assert.equal(separated.score.changedByCommonBigrams, true);
+  assert.ok(separated.commonBigramPatterns);
+  assert.equal(joined.score.changedByCommonBigrams, false);
+  assert.equal(joined.commonBigramPatterns, null);
+  assert.equal(joined.score.effectiveLog10, joined.score.baselineLog10);
+});
+
+test('still discounts a separatorless pair when zxcvbn keeps its two words separate', () => {
+  const result = analyzePassword('goodgame-123', { userInputs: [] });
+  assert.equal(result.score.changedByCommonBigrams, true);
+  assert.ok(result.commonBigramPatterns);
+  const pair = result.commonBigramPatterns.patterns[0].selectedPairs[0];
+  assert.equal(`${pair.left} ${pair.right}`, 'good game');
+});
 
 test('recovers a common pair through literal alphabetic edge residue without deleting it', () => {
-  for (const password of ['xnewyork', 'newyorkx', 'xnewyorkx', 'xxnewyork', 'newyorkxx']) {
+  for (const password of ['xnew_york', 'new_yorkx', 'xnew_yorkx', 'xxnew_york', 'new_yorkxx']) {
     const scored = scoreCommonBigramPatterns(password, 10);
     assert.equal(scored.changed, true, password);
     const [pattern] = scored.composition.patterns;
